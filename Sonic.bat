@@ -8,5 +8,5 @@ IF ERRORLEVEL 1 (
 )
 
 REM Executa o script Python
-python ASonic.0.1.py
+python ASonic.0.3.py
 pause

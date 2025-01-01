@@ -37,7 +37,6 @@ def log_message(message):
 
 # Initialize IQ Option API
 account_type = "PRACTICE"  # Default to demo account
-instrument_types = ["binary", "crypto", "digital", "otc"]  # Supported instruments
 
 # Define global variables
 running = False
@@ -47,9 +46,10 @@ current_amount = 10  # Track the current trade amount for Martingale strategy
 max_simultaneous_trades = 3
 martingale_limit = 5  # Limit the number of consecutive Martingale steps
 consecutive_losses = 0
-session_profit = 0
+session_profit = 0.0
 
 iq = None  # Placeholder for the IQ Option API instance
+simultaneous_trades = 0
 
 # Connect to IQ Option API
 def connect_to_iq_option(email, password):
@@ -66,21 +66,16 @@ def connect_to_iq_option(email, password):
     return check, reason
 
 def reconnect_if_needed():
-    log_message("Checking IQ Option API connection status...")
+    global iq
     if iq is None or not iq.check_connect():
-        log_message("Reconnecting to IQ Option API...")
+        log_message("API disconnected. Reconnecting...")
         connect_to_iq_option(email, password)
-
-def is_asset_available(asset):
-    try:
-        available_assets = iq.get_all_ACTIVES_OPCODE()
-        if asset in available_assets:
-            return True
-    except Exception as e:
-        log_message(f"Error checking availability for {asset}: {e}")
-    return False
+        if not iq or not iq.check_connect():
+            log_message("Reconnection failed. Exiting...")
+            running = False
 
 # Analyze indicators
+
 def fetch_historical_data(asset, duration, candle_count):
     reconnect_if_needed()
     candles = iq.get_candles(asset, duration * 60, candle_count, time.time())
@@ -172,7 +167,8 @@ def analyze_indicators(asset):
         log_message(f"Error analyzing indicators for {asset}: {e}")
         return None
 
-# Fetch assets and filter top ones
+# Fetch assets
+
 def fetch_top_assets():
     log_message("Fetching all available assets...")
     reconnect_if_needed()
@@ -183,11 +179,11 @@ def fetch_top_assets():
     try:
         valid_assets = iq.get_all_ACTIVES_OPCODE()
         log_message(f"Available assets: {valid_assets}")
-        return [asset for asset in valid_assets.keys() if asset.lower() != "yahoo"]
+        return [asset for asset in valid_assets.keys() if asset != "YAHOO"]  # Exclude YAHOO
     except Exception as e:
         log_message(f"Error fetching assets: {e}")
         return []
-
+    
 # Execute trades continuously
 def execute_trades():
     global running
@@ -262,60 +258,6 @@ def monitor_trade(trade_id, asset):
         simultaneous_trades -= 1
 
 
-def trade_logic(asset):
-    global current_amount
-    global consecutive_losses
-    global initial_amount
-    global session_profit
-
-    if not is_asset_available(asset):
-        log_message(f"Asset {asset} is not available for trading. Skipping.")
-        return
-
-    decision = analyze_indicators(asset)
-    if not decision:
-        return
-
-    if not iq.check_connect():
-        reconnect_if_needed()
-        if not iq.check_connect():
-            log_message(f"Cannot place trade for {asset}: API is disconnected.")
-            return
-
-    action = "call" if decision == "buy" else "put"
-    log_message(f"Attempting to place trade: Asset={asset}, Action={action}, Amount={current_amount}, Duration=5")
-
-    try:
-        success, trade_id = iq.buy(current_amount, asset, action, 5)
-        if success:
-            log_message(f"Trade executed for {asset}: {decision.upper()} with trade ID {trade_id}")
-            time.sleep(300)  # Wait for trade to complete
-            result = iq.check_win_v3(trade_id)
-            log_message(f"Trade result for {trade_id}: {result}")
-
-            session_profit += result
-            update_session_profit()
-
-            if result < 0:
-                consecutive_losses += 1
-                log_message(f"Trade for {asset} lost. Consecutive losses: {consecutive_losses}")
-                if consecutive_losses >= martingale_limit:
-                    log_message("Martingale limit reached. Resetting amount to initial value.")
-                    current_amount = initial_amount
-                    consecutive_losses = 0
-                else:
-                    current_amount *= 2
-                    log_message(f"Doubling the amount for the next trade: {current_amount}")
-            else:
-                consecutive_losses = 0
-                current_amount = initial_amount
-                log_message(f"Trade for {asset} won. Resetting to initial amount.")
-        else:
-            log_message(f"Trade placement failed for {asset}. Skipping.")
-    except Exception as e:
-        log_message(f"Error placing trade for {asset}: {e}")
-
-
 # GUI Setup with dark theme
 def start_trading():
     global running
@@ -374,7 +316,7 @@ root.title("Trading Bot")
 root.configure(bg="#2E2E2E")  # Set dark theme background
 
 static_icon = PhotoImage(file="static_icon.png")
-rotating_icon = PhotoImage(file="working_sonic.png")
+rotating_icon = PhotoImage(file="working_capy.png")
 icon_label = tk.Label(root, image=static_icon, bg="#2E2E2E")
 icon_label.grid(row=0, column=0, rowspan=2, padx=10, pady=10)
 
