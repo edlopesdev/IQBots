@@ -24,7 +24,7 @@ def load_credentials():
 email, password = load_credentials()
 
 # Define log file path
-log_file = os.path.normpath(os.path.join(os.getcwd(), "trade_log.txt"))
+log_file = os.path.normpath(os.path.join(os.getcwd(), "sonic_log.txt"))
 
 def log_message(message):
     try:
@@ -40,15 +40,16 @@ account_type = "PRACTICE"  # Default to demo account
 instrument_types = ["binary", "crypto", "digital", "otc"]  # Supported instruments
 
 # Define global variables
+# Define global variables
 running = False
 icon_label = None
-initial_amount = 10
-current_amount = 10  # Track the current trade amount for Martingale strategy
+initial_amount = 2
+current_amount = 2  # Track the current trade amount for Martingale strategy
 max_simultaneous_trades = 3
+simultaneous_trades = 0  # Initialize simultaneous trades counter
 martingale_limit = 5  # Limit the number of consecutive Martingale steps
 consecutive_losses = 0
 session_profit = 0
-
 iq = None  # Placeholder for the IQ Option API instance
 
 # Connect to IQ Option API
@@ -180,13 +181,21 @@ def fetch_top_assets():
         log_message("IQ Option API is not connected. Cannot fetch assets.")
         return []
 
+    # Lista de ativos a serem ignorados
+    ignored_assets = {"yahoo", "twitter"}
+
     try:
         valid_assets = iq.get_all_ACTIVES_OPCODE()
         log_message(f"Available assets: {valid_assets}")
-        return [asset for asset in valid_assets.keys() if asset.lower() != "yahoo"]
+
+        # Filtrar ativos válidos, excluindo os indesejados
+        filtered_assets = [asset for asset in valid_assets.keys() if asset.lower() not in ignored_assets]
+        log_message(f"Filtered assets: {filtered_assets}")
+        return filtered_assets
     except Exception as e:
         log_message(f"Error fetching assets: {e}")
         return []
+
 
 # Execute trades continuously
 def execute_trades():
@@ -222,7 +231,7 @@ def execute_trades():
             log_message(f"Attempting trade: Asset={asset}, Action={action}, Amount=${current_amount}")
 
             try:
-                success, trade_id = iq.buy(current_amount, asset, action, 5)
+                success, trade_id = iq.buy(current_amount, asset, action, 1)
                 if success:
                     simultaneous_trades += 1
                     log_message(f"Trade placed successfully for {asset}. Trade ID={trade_id}")
@@ -239,11 +248,23 @@ def monitor_trade(trade_id, asset):
     global current_amount
 
     try:
-        result = iq.check_win_v3(trade_id)
+        # Aguarda até que a operação seja concluída
+        log_message(f"Monitoring trade {trade_id} for asset {asset}...")
+        result = None
+        while result is None:
+            try:
+                result = iq.check_win_v3(trade_id)  # Verifica o resultado da operação
+                if result is None:
+                    log_message(f"Trade {trade_id} not completed yet. Retrying in 1 minute...")
+                    time.sleep(60)  # Aguarda 1 minuto antes de tentar novamente
+            except Exception as e:
+                log_message(f"Error checking status for trade {trade_id}: {e}")
+                time.sleep(60)  # Aguarda antes de tentar novamente
+
         session_profit += result
         log_message(f"Trade result for {asset}: {'Win' if result > 0 else 'Loss'}, Profit={result}")
 
-        update_session_profit()  # Update the profit display in GUI
+        update_session_profit()  # Atualiza o lucro no GUI
 
         if result < 0:
             consecutive_losses += 1
@@ -260,6 +281,7 @@ def monitor_trade(trade_id, asset):
 
     finally:
         simultaneous_trades -= 1
+
 
 
 def trade_logic(asset):
@@ -283,10 +305,10 @@ def trade_logic(asset):
             return
 
     action = "call" if decision == "buy" else "put"
-    log_message(f"Attempting to place trade: Asset={asset}, Action={action}, Amount={current_amount}, Duration=5")
+    log_message(f"Attempting to place trade: Asset={asset}, Action={action}, Amount={current_amount}, Duration=1")
 
     try:
-        success, trade_id = iq.buy(current_amount, asset, action, 5)
+        success, trade_id = iq.buy(current_amount, asset, action, 1)
         if success:
             log_message(f"Trade executed for {asset}: {decision.upper()} with trade ID {trade_id}")
             time.sleep(300)  # Wait for trade to complete
@@ -344,7 +366,7 @@ def update_log():
         root.after(1000, update_log)
 
 def update_session_profit():
-    profit_label.config(text=f"Session Profit: ${session_profit:.2f}", fg="green" if session_profit >= 0 else "red")
+    profit_label.config(text=f"Lucro: R${session_profit:.2f}", fg="green" if session_profit >= 0 else "red")
 
 def set_amount(amount):
     global initial_amount
@@ -370,7 +392,7 @@ def switch_account_type():
 
 # GUI Configuration
 root = tk.Tk()
-root.title("Trading Bot")
+root.title("Sonic")
 root.configure(bg="#2E2E2E")  # Set dark theme background
 
 static_icon = PhotoImage(file="static_icon.png")
@@ -391,7 +413,7 @@ amount_label = tk.Label(root, text="Initial Amount:", bg="#2E2E2E", fg="white", 
 amount_label.grid(row=1, column=1, padx=5, pady=5)
 
 amount_entry = tk.Entry(root, font=("Helvetica", 12))
-amount_entry.insert(0, "10")
+amount_entry.insert(0, "2")
 amount_entry.grid(row=1, column=2, padx=5, pady=5)
 
 set_button = tk.Button(root, text="Set Amount", command=lambda: set_amount(float(amount_entry.get())), bg="#FFC107", fg="black", font=("Helvetica", 12))
@@ -400,7 +422,7 @@ set_button.grid(row=1, column=3, padx=5, pady=5)
 log_text = ScrolledText(root, height=10, font=("Courier", 10), bg="#1C1C1C", fg="white")
 log_text.grid(row=2, column=0, columnspan=5, padx=10, pady=10)
 
-profit_label = tk.Label(root, text="Session Profit: $0.00", font=("Helvetica", 16), bg="#2E2E2E", fg="white")
+profit_label = tk.Label(root, text="Lucro: R$0.00", font=("Helvetica", 16), bg="#2E2E2E", fg="white")
 profit_label.grid(row=3, column=0, columnspan=5, padx=10, pady=10)
 
 update_log()
