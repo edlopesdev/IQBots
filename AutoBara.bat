@@ -8,6 +8,5 @@ IF ERRORLEVEL 1 (
 )
 
 REM Executa o script Python
-martingalemanager.py
-python ACapybara.2.2.py
+python GambisPraAutomatizar.py
 pause
