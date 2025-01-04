@@ -43,3 +43,27 @@ class MartingaleManager:
         with self.lock:
             return self.current_amount
 
+
+    def monitor_trades(self):
+        """
+        Monitora continuamente os trades abertos e atualiza os resultados a cada 10 segundos.
+        """
+        while self.running:
+            print("Executando monitoramento paralelo.")
+            try:
+                logging.info("Verificando trades abertos...")
+                open_trades = self.api.get_open_positions() if self.api else []
+
+                for trade in open_trades:
+                    trade_id = trade["id"]
+                    result = self.api.check_win_v3(trade_id) if self.api else None
+
+                    if result is not None:
+                        logging.info(f"Resultado do trade {trade_id}: {result}")
+                        self.update_on_result(result)
+
+                logging.info("Monitoramento de trades concluído. Aguardando 10 segundos...")
+            except Exception as e:
+                logging.error(f"Erro ao monitorar trades: {e}")
+
+            time.sleep(10)  # Aguarda 10 segundos antes de verificar novamente

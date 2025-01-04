@@ -89,29 +89,27 @@ def connect_to_iq_option(email, password):
 
 def fetch_sorted_assets():
     logging.info("Buscando e classificando ativos por volume e lucratividade...")
-    reconnect_if_needed()
-
-    if iq is None:
-        logging.info("API desconectada. Não é possível buscar ativos.")
-        return []
+    if iq is None or not iq.check_connect():
+        log_message("API desconectada. Tentando reconectar...")
+        connect_to_iq_option(email, password)
+        if iq is None or not iq.check_connect():
+            log_message("Falha na reconexão. Não é possível buscar ativos.")
+            return []
 
     try:
+        digital_data = iq.get_digital_underlying_list_data()
+        if digital_data is None or "underlying" not in digital_data:
+            log_message("Nenhum ativo digital disponível.")
+            return []
+
         assets = iq.get_all_ACTIVES_OPCODE()
+        if not assets:
+            log_message("Nenhum ativo disponível para negociação.")
+            return []
+
         raw_profitability = iq.get_all_profit()
-
-        profitability = {}
-        for asset, values in raw_profitability.items():
-            if isinstance(values, dict):  # Tratamento para defaultdict
-                profitability[asset] = float(values.get('binary', 0.0))
-            else:
-                profitability[asset] = float(values)
-
-        sorted_assets = sorted(
-            assets.keys(),
-            key=lambda asset: profitability.get(asset, 0.0),
-            reverse=True
-        )
-
+        profitability = {asset: float(values.get('binary', 0.0)) for asset, values in raw_profitability.items() if isinstance(values, dict)}
+        sorted_assets = sorted(assets.keys(), key=lambda asset: profitability.get(asset, 0.0), reverse=True)
         log_message(f"Ativos classificados: {sorted_assets}")
         return sorted_assets
     except Exception as e:
