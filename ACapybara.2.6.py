@@ -1,3 +1,5 @@
+# Arquivo: ACapybara.2.5.py
+
 from iqoptionapi.stable_api import IQ_Option
 import threading
 import time
@@ -5,11 +7,16 @@ import os
 import tkinter as tk
 from tkinter.scrolledtext import ScrolledText
 from tkinter import PhotoImage
+import pandas as pd
+import pandas_ta as ta
+import json
+import logging
 from MGM_ import MartingaleManager
-
-# Load credentials from file
+import sys
+import queue
+# Carregar credenciais do arquivo
 credentials_file = os.path.normpath(os.path.join(os.getcwd(), "credentials.txt"))
-
+sys.setrecursionlimit(2000)
 def load_credentials():
     try:
         with open(credentials_file, "r") as file:
@@ -17,12 +24,11 @@ def load_credentials():
             creds = {line.split('=')[0].strip(): line.split('=')[1].strip() for line in lines if '=' in line}
             return creds.get("email"), creds.get("password")
     except FileNotFoundError:
-        raise Exception("Credentials file not found. Please ensure 'credentials.txt' is in the working directory.")
+        raise Exception("Arquivo de credenciais não encontrado. Certifique-se de que 'credentials.txt' está no diretório de trabalho.")
 
-# Load credentials
+# Carregar credenciais
 email, password = load_credentials()
 
-# Define log file path
 log_file = os.path.normpath(os.path.join(os.getcwd(), "trade_log.txt"))
 
 def log_message(message):
@@ -34,65 +40,143 @@ def log_message(message):
             file.write(message + "\n")
     print(message)
 
-# Initialize IQ Option API
-account_type = "REAL"  # Default to demo account
-instrument_types = ["binary", "crypto", "digital", "otc"]  # Supported instruments
+API = IQ_Option(email, password)
 
-# Define global variables
+# Gerenciar fila de mensagens com limite
+message_queue = queue.Queue(maxsize=100)  # Limite de 100 mensagens
+
+def on_message(message):
+    try:
+        # Validação inicial da mensagem
+        if not isinstance(message, str) or not message.strip():
+            raise ValueError("Mensagem vazia ou inválida recebida.")
+        if not (message.startswith("{") and message.endswith("}")):
+            raise ValueError("Mensagem não é um JSON válido.")
+
+        # Tentativa de decodificar a mensagem JSON
+        decoded_message = json.loads(message)
+
+        # Adiciona a mensagem à fila, descartando as mais antigas se estiver cheia
+        if message_queue.full():
+            logging.warning("Fila cheia, descartando a mensagem mais antiga.")
+            message_queue.get()  # Remove a mensagem mais antiga
+        message_queue.put(decoded_message)  # Adiciona a nova mensagem
+        logging.info(f"Mensagem processada: {decoded_message}")
+        return decoded_message
+
+    except ValueError as ve:
+        logging.error(f"Erro de validação da mensagem: {ve}")
+    except json.JSONDecodeError as je:
+        logging.error(f"Erro ao decodificar JSON: {je}")
+    except Exception as e:
+        logging.error(f"Erro inesperado: {e}")
+
+def process_message():
+    while not message_queue.empty():
+        message = message_queue.get()
+        try:
+            # Processamento seguro da mensagem
+            logging.info(f"Processando mensagem: {message}")
+        except Exception as e:
+            logging.error(f"Erro ao processar mensagem: {e}")
+
+# Exemplo de uso da função on_message
+on_message('{"key": "value"}')
+on_message('')
+on_message('not a json')
+
+
+# Inicializar a API IQ Option
+account_type = "REAL"  # Conta Real - ALTERADO PARA TESTE
+instrument_types = ["binary", "crypto", "digital", "otc"]  # Tipos de instrumentos suportados
+
+# Definir variáveis globais
 running = False
 icon_label = None
 initial_amount = 2
-current_amount = 2  # Track the current trade amount for Martingale strategy
-max_simultaneous_trades = 3  # Allow up to 3 trades simultaneously
-martingale_limit = 5  # Limit the number of consecutive Martingale steps
+current_amount = 2  # Acompanhar o valor atual da negociação para estratégia Martingale
+max_simultaneous_trades = 3
+simultaneous_trades = 0  # Inicializar o contador de negociações simultâneas
+martingale_limit = 5  # Limite de negociações Martingale consecutivas
 consecutive_losses = 0
 session_profit = 0
-profit_label = 0
+iq = None  # Instância da API IQ Option
 
-iq = None  # Placeholder for the IQ Option API instance
-
-# Connect to IQ Option API
+# Conectar à API IQ Option
 def connect_to_iq_option(email, password):
     global iq
-    log_message("Attempting to connect to IQ Option API...")
+    log_message("Tentando conectar à API IQ Option...")
     iq = IQ_Option(email, password)
     check, reason = iq.connect()
     if check:
-        iq.change_balance(account_type)  # Switch between 'PRACTICE' and 'REAL'
-        log_message("Successfully connected to IQ Option API.")
+        iq.change_balance(account_type)  # Alternar entre 'PRACTICE' e 'REAL'
+        log_message("Conexão bem-sucedida com a API IQ Option.")
     else:
-        log_message(f"Failed to connect to IQ Option API: {reason}")
-        iq = None  # Ensure iq is None if the connection fails
+        log_message(f"Falha ao conectar à API IQ Option: {reason}")
+        iq = None  # Garantir que iq seja None se a conexão falhar
     return check, reason
 
-
-
-
-def reconnect_if_needed():
-    log_message("Checking IQ Option API connection status...")
+def fetch_sorted_assets():
+    logging.info("Buscando e classificando ativos por volume e lucratividade...")
     if iq is None or not iq.check_connect():
-        log_message("Reconnecting to IQ Option API...")
+        log_message("API desconectada. Tentando reconectar...")
         connect_to_iq_option(email, password)
+        if iq is None or not iq.check_connect():
+            log_message("Falha na reconexão. Não é possível buscar ativos.")
+            return []
 
-def buy_on_iq_option(amount, asset, action, duration):
-    log_message(f"Placing trade: Asset={asset}, Action={action}, Amount={amount}, Duration={duration}")
-    for _ in range(3):  # Retry logic
-        try:
-            success, trade_id = iq.buy(amount, asset, action, duration)
-            if success:
-                return success, trade_id
-            log_message(f"Trade attempt failed for {asset}. Retrying...")
-        except Exception as e:
-            log_message(f"Error during trade attempt for {asset}: {e}")
-        time.sleep(2)  # Small delay before retry
-    return False, None
+    try:
+        digital_data = iq.get_digital_underlying_list_data()
+        if digital_data is None or "underlying" not in digital_data:
+            log_message("Nenhum ativo digital disponível.")
+            return []
 
-def check_win_v3(trade_id):
-    log_message(f"Checking trade result for Trade ID: {trade_id}")
-    return iq.check_win_v3(trade_id)
+        assets = iq.get_all_ACTIVES_OPCODE()
+        if not assets:
+            log_message("Nenhum ativo disponível para negociação.")
+            return []
+
+        raw_profitability = iq.get_all_profit()
+        profitability = {asset: float(values.get('binary', 0.0)) for asset, values in raw_profitability.items() if isinstance(values, dict)}
+        sorted_assets = sorted(assets.keys(), key=lambda asset: profitability.get(asset, 0.0), reverse=True)
+        log_message(f"Ativos classificados: {sorted_assets}")
+        return sorted_assets
+    except Exception as e:
+        log_message(f"Erro ao buscar e classificar ativos: {e}")
+        return []
+
+def fetch_historical_data(asset, duration, candle_count):
+    reconnect_if_needed()
     
+    candles = iq.get_candles(asset, duration * 60, candle_count, time.time())
+    df = pd.DataFrame(candles)
+    df["close"] = df["close"].astype(float)
+    df["open"] = df["open"].astype(float)
+    df["high"] = df["max"].astype(float)
+    df["low"] = df["min"].astype(float)
+    return df
 
-# Analyze indicators manually
+
+ #Função para reconectar à API
+
+def reconnect():
+    global iq
+    while True:
+        if iq is None or not iq.check_connect():
+            logging.info("Reconectando à API IQ Option...")
+            iq = IQ_Option(email, password)
+            check, reason = iq.connect()
+            if check:
+                iq.change_balance(account_type)
+                logging.info("Reconexão bem-sucedida.")
+            else:
+                logging.error(f"Falha na reconexão: {reason}")
+        time.sleep(5)
+
+# Substituir chamada de ativos pelo novo método ordenado
+threading.Thread(target=reconnect, daemon=True).start()
+
+# Atualização da função analyze_indicators
 
 def analyze_indicators(asset):
     log_message(f"Analisando indicadores para {asset}...")
@@ -224,110 +308,101 @@ def analyze_indicators(asset):
         log_message(f"Erro ao analisar indicadores para {asset}: {e}")
         return None
 
+#Execução de trades
+top_assets = fetch_sorted_assets()
 
-# Fetch the most profitable asset
-def fetch_top_asset():
-    log_message("Fetching the most profitable asset...")
-    reconnect_if_needed()
-    if iq is None:
-        log_message("IQ Option API is not connected. Cannot fetch assets.")
-        return None
-
-    all_assets = {}
-    try:
-        valid_assets = iq.get_all_ACTIVES_OPCODE()
-        log_message(f"Valid assets: {valid_assets}")
-
-        for instrument in instrument_types:
-            try:
-                assets = iq.get_all_open_time()[instrument]
-                log_message(f"Assets for {instrument}: {assets}")
-                if assets:
-                    for asset, details in assets.items():
-                        if details.get("open") and asset in valid_assets:
-                            all_assets[asset] = details.get("volume", 0)
-            except Exception as e:
-                log_message(f"Error fetching assets for {instrument}: {e}")
-                continue
-    except Exception as e:
-        log_message(f"Error fetching assets: {e}")
-        return None
-
-    if not all_assets:
-        log_message("No available assets for trading.")
-        running = False
-        return None
-
-    top_asset = max(all_assets.items(), key=lambda x: float(x[1]) if x[1] else 0)
-    log_message(f"Top asset: {top_asset}")
-    return top_asset
-
-# Execute trades continuously for the most profitable asset
-def execute_trades():
+def execute_trade(asset, decision):
     global current_amount
     global running
     global consecutive_losses
+
+    expirations = 5  # Define o tempo de expiração
+
+    if not running:
+        log_message("Trading not running. Exiting execution.")
+        return
+
+    log_message(f"Executing trade for {asset} with decision {decision}...")
+    try:
+        result = iq.buy(current_amount, asset, decision, expirations)
+        log_message(f"Trade result for {asset}: {result}")
+        log_message(f"Chamando update_on_result com asset={asset}, current_amount={current_amount}")
+        threading.Thread(target=MartingaleManager.update_on_result, args=(asset, current_amount)).start()
+        time.sleep(300)
+    except Exception as e:
+        log_message(f"Erro ao executar trade para {asset}: {e}")
+
+def reconnect_if_needed():
+    global iq
+    if iq is None or not iq.check_connect():
+        log_message("API desconectada. Tentando reconectar...")
+        connect_to_iq_option(email, password)
+        if not iq or not iq.check_connect():
+            log_message("Falha na reconexão. Pulando ciclo de negociações.")
+            time.sleep(30)  # Evite sobrecarregar a API
+
+def start_trading_loop():
+    global running
 
     while running:
-        log_message("Executing trades...")
-        top_asset = fetch_top_asset()
-        if not top_asset:
-            log_message("No top asset found. Stopping execution.")
-            break
+        assets = fetch_sorted_assets()
+        if not assets:
+            log_message("Nenhum ativo disponível. Aguardando...")
+            time.sleep(5)  # Aguarde antes de tentar novamente
+            continue
+        for asset in assets:
+            if asset not in ignore_assets(True):
+                decision = analyze_indicators(asset)
 
-        asset, _ = top_asset
-        threading.Thread(target=MartingaleManager.update_on_result, args=(asset, current_amount)).start()
-
-        time.sleep(2)
-
-def monitor_and_analyze_trade(asset, amount):
-    global current_amount
-    global initial_amount
-    global running
-    global consecutive_losses
-
-    decision = analyze_indicators(asset)
-    action = "call" if decision == "buy" else "put"
-    log_message(f"Attempting to place trade: Asset={asset}, Action={action}, Amount={amount}, Duration=5")
-
-    try:
-        success, trade_id = buy_on_iq_option(amount, asset, action, 5)
-        if success:
-            log_message(f"Trade executed for {asset}: {decision.upper()} with trade ID {trade_id}")
-            time.sleep(300)  # Wait for trade to complete
-            result = check_win_v3(trade_id)
-            log_message(f"Trade result for {trade_id}: {result}")
-
-            if result < 0:
-                consecutive_losses += 1
-                log_message(f"Trade for {asset} lost. Consecutive losses: {consecutive_losses}")
-                if consecutive_losses >= martingale_limit:
-                    log_message("Martingale limit reached. Resetting amount to initial value.")
-                    current_amount = initial_amount
-                    consecutive_losses = 0
+                if decision == "buy":
+                    execute_trade(asset, "call")
+                elif decision == "sell":
+                    execute_trade(asset, "put")
                 else:
-                    log_message(f"Doubling the amount for the next trade: {current_amount * 2}")
-                    current_amount *= 2
-            else:
-                log_message(f"Trade for {asset} won. Resetting to initial amount.")
-                current_amount = initial_amount
-                consecutive_losses = 0
-        else:
-            log_message(f"Trade placement failed for {asset}. Verify asset availability, amount, or connection.")
-    except KeyError:
-        log_message(f"Asset {asset} is not supported by the API. Skipping...")
-    except Exception as e:
-        log_message(f"Unexpected error monitoring trade for {asset}: {e}")
+                    log_message(f"Nenhuma decisão para {asset}, pulando...")
+            
+            update_session_profit()
+            time.sleep(5)  # Intervalo entre negociações
+            continue
+        reconnect_if_needed()
 
+# manager = MartingaleManager(current_amount)
 
-# GUI Setup
+# Função para ignorar ativos específicos
+def ignore_assets(check_flag):
+    if check_flag:
+        return ["YAHOO", "TWITTER"]
+    return []
+
+# def update_session_profit():
+#     """
+#     Atualiza o lucro da sessão a cada 30 segundos.
+#     """
+#     global session_profit  # Certifique-se de que 'session_profit' está definido como global
+#     while True:
+#         try:
+#             # Aqui você pode implementar lógica adicional, se necessário
+#             profit_label.after(0, lambda: profit_label.config(
+#                 text=f"Lucro da sessão ativa: R${session_profit:.2f}",
+#                 fg="green" if session_profit >= 0 else "red"
+#             ))
+#             log_message(f"Lucro da sessão atualizado: ${session_profit:.2f}")
+#         except Exception as e:
+#             log_message(f"Erro ao atualizar lucro da sessão: {e}")
+#         time.sleep(60)
+
+# Exemplo de teste da função on_message
+on_message('{"key": "value"}')
+
+# GUI Setup with dark theme
 def start_trading():
     global running
     if not running:
         running = True
         icon_label.config(image=rotating_icon)
         log_message("Starting trading session...")
-        threading.Thread(target=execute_trades).start()
+        threading.Thread(target=start_trading_loop).start()
+        
 
 def stop_trading():
     global running
@@ -348,10 +423,7 @@ def update_log():
         root.after(1000, update_log)
 
 def update_session_profit():
-    global session_profit
-    profit_label.config(text=f"Session Profit: R${session_profit:.2f}", fg="green" if session_profit >= 0 else "red")
-threading.Thread(target=update_session_profit, args=(profit_label,)).start()
-
+    profit_label.config(text=f"Lucro da sessão ativa: R${session_profit:.2f}", fg="green" if session_profit >= 0 else "red")
 
 def set_amount(amount):
     global initial_amount
@@ -375,84 +447,15 @@ def switch_account_type():
     else:
         log_message(f"Failed to switch account type. Current type remains as {'Demo' if previous_account == 'PRACTICE' else '             '}")
 
+# Inicializar MartingaleManager com current_amount
+threading.Thread(target=MartingaleManager.update_on_result, args=(top_assets, current_amount)).start()
 
-# def start_trading():
-#     global running
-#     global icon_label
-#     if not running:
-#         running = True
-#         log_message("Starting trading session...")
-#         icon_label.config(image=rotating_icon)
-#         threading.Thread(target=execute_trades).start()
 
-# def stop_trading():
-#     global running
-#     running = False
-#     log_message("Trading stopped.")
-#     icon_label.config(image=static_icon)
 
-# def update_log():
-#     try:
-#         with open(log_file, "r") as file:
-#             lines = file.readlines()
-#             log_text.delete(1.0, tk.END)
-#             log_text.insert(tk.END, "".join(lines[-10:]))  # Show last 10 lines
-#     except FileNotFoundError:
-#         log_text.delete(1.0, tk.END)
-#         log_text.insert(tk.END, "Log file not found. Waiting for new entries...\n")
-#     if running:
-#         root.after(1000, update_log)
 
-# def switch_account_type():
-#     global account_type
-#     reconnect_if_needed()
-#     if iq is None:
-#         log_message("Unable to switch account. IQ Option API is not connected.")
-#         return
-
-#     previous_account = account_type
-#     account_type = "REAL" if account_type == "PRACTICE" else "PRACTICE"
-#     success = iq.change_balance(account_type)
-#     if success:
-#         log_message(f"Successfully switched to {'Demo' if account_type == 'PRACTICE' else 'Real'} account")
-#     else:
-#         log_message(f"Failed to switch account type. Current type remains as {'Demo' if previous_account == 'PRACTICE' else 'Real'}")
-
-# root = tk.Tk()
-# root.title("Trading Bot")
-
-# static_icon = PhotoImage(file="static_icon.png")
-# rotating_icon = PhotoImage(file="rotating_icon.gif")
-# icon_label = tk.Label(root, image=static_icon)
-# icon_label.pack()
-
-# start_button = tk.Button(root, text="Start", command=start_trading)
-# start_button.pack()
-
-# stop_button = tk.Button(root, text="Stop", command=stop_trading)
-# stop_button.pack()
-
-# amount_label = tk.Label(root, text="Initial Amount:")
-# amount_label.pack()
-
-# amount_entry = tk.Entry(root)
-# amount_entry.insert(0, "10")
-# amount_entry.pack()
-
-# def set_initial_amount():
-#     global initial_amount
-#     global current_amount
-#     initial_amount = float(amount_entry.get())
-#     current_amount = initial_amount
-
-# set_button = tk.Button(root, text="Set Amount", command=set_initial_amount)
-# set_button.pack()
-
-# log_text = ScrolledText(root, height=10)
-# log_text.pack()
-#Gui config
+# GUI Configuration
 root = tk.Tk()
-root.title("Capybara v2.4")
+root.title("Capybara v2.5")
 root.configure(bg="#082429")  # Set dark theme background
 
 static_icon = PhotoImage(file="static_icon.png")
@@ -482,7 +485,7 @@ set_button.grid(row=1, column=3, padx=5, pady=5)
 log_text = ScrolledText(root, height=10, font=("Courier", 10), bg="#082429", fg="white")
 log_text.grid(row=2, column=0, columnspan=5, padx=10, pady=10)
 
-profit_label = tk.Label(root, text="Session Profit: $0.00", font=("Helvetica", 16), bg="#082429", fg="white")
+profit_label = tk.Label(root, text=f"Deus seja louvado!  R$:{session_profit:.2f}", font=("Helvetica", 16), bg="#082429", fg="white")
 profit_label.grid(row=3, column=0, columnspan=5, padx=10, pady=10)
 
 # Rodapé
@@ -491,7 +494,7 @@ footer_label = tk.Label(
     text="@oedlopes - 2025  - À∴G∴D∴G∴A∴D∴U∴",
     bg="#082429",
     fg="#A9A9A9",
-    font=("Helvetica", 8)
+    font=("Helvetica", 5)
 )
 footer_label.grid(row=4, column=0, columnspan=4, padx=10, pady=5, sticky="nsew")
 
