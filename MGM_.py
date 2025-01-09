@@ -1,25 +1,55 @@
-# martingale_manager.py
-
+from threading import Lock
 import logging
-import threading
 
 class MartingaleManager:
-    """
-    Gerencia a lógica do Martingale, monitorando negociações em paralelo.
-    """
-    def __init__(self, initial_amount, martingale_limit=5):
+    def __init__(self, initial_amount, martingale_limit):
+        self.lock = Lock()
         self.initial_amount = initial_amount
         self.current_amount = initial_amount
         self.martingale_limit = martingale_limit
         self.consecutive_losses = 0
-        self.lock = threading.Lock()  # Garantir thread safety
+        self.is_executing_trade = False  # Certifique-se de inicializar este atributo
 
-    def update_on_result(self, result):
+    def execute_trade_MGM(self, asset, action, iq):
         """
-        Atualiza os valores com base no resultado da negociação.
-        :param result: Dicionário com status ("win" ou "loss") e amount do resultado.
+        Realiza uma negociação Martingale com controle de execução simultânea.
         """
         with self.lock:
+            if self.is_executing_trade:
+                logging.warning("Execução de trade já em andamento. Ignorando nova tentativa.")
+                return  # Ignorar se uma negociação já estiver em andamento
+            self.is_executing_trade = True  # Marcar negociação como em execução
+
+        try:
+            trade_amount = self.current_amount
+            logging.info(f"Executando trade: Ativo={asset}, Ação={action}, Valor={trade_amount}")
+
+            # Tenta realizar o trade
+            success, trade_id = iq.buy(trade_amount, asset, action, 5)
+            if success:
+                logging.info(f"Trade iniciado: ID={trade_id}")
+                result = iq.check_win_v4(trade_id)  # Aguarda o resultado do trade
+                if result is not None:
+                    status = "win" if result > 0 else "loss"
+                    self.update_on_result({"status": status, "amount": result})
+            else:
+                logging.warning(f"Falha ao executar trade para {asset}.")
+        except Exception as e:
+            logging.error(f"Erro ao executar trade para {asset}: {e}")
+        finally:
+            with self.lock:
+                self.is_executing_trade = False  # Liberar para novas negociações
+
+    def update_on_result(self, asset, amount):
+        """
+        Atualiza as informações de Martingale com base no resultado do trade.
+        """
+        with self.lock:
+            # Exemplo de lógica de atualização
+            print(f"Atualizando resultado para o ativo {asset} com valor {amount}.")
+            # Lógica de Martingale, por exemplo:
+            self.consecutive_losses += 1
+            self.current_amount = amount * 2 if self.consecutive_losses < self.martingale_limit else self.initial_amount
             if result.get("status") == "win":
                 logging.info(f"Vitória! Restaurando valor inicial: {self.initial_amount}")
                 self.current_amount = self.initial_amount
@@ -29,41 +59,21 @@ class MartingaleManager:
                 if self.consecutive_losses <= self.martingale_limit:
                     self.current_amount *= 2
                     logging.warning(f"Derrota. Aplicando Martingale. Novo valor: {self.current_amount}")
-                    from ACapybara import execute_trades
-                    execute_trades()
                 else:
                     logging.error("Limite de Martingale atingido. Resetando valores.")
                     self.current_amount = self.initial_amount
                     self.consecutive_losses = 0
 
-    def get_current_amount(self):
-        """
-        Retorna o valor atual de negociação.
-        """
-        with self.lock:
-            return self.current_amount
+print('MGM Funcionando corretamente')
 
 
-    def monitor_trades(self):
-        """
-        Monitora continuamente os trades abertos e atualiza os resultados a cada 10 segundos.
-        """
-        while self.running:
-            print("Executando monitoramento paralelo.")
-            try:
-                logging.info("Verificando trades abertos...")
-                open_trades = self.api.get_open_positions() if self.api else []
+# # Usando a instância
+# trade_amount = martingale_manager.get_current_amount()
+# print(f"Valor atual de negociação: {trade_amount}")
 
-                for trade in open_trades:
-                    trade_id = trade["id"]
-                    result = self.api.check_win_v3(trade_id) if self.api else None
+# # Atualizar com o resultado de um trade
+# result = {"status": "loss", "amount": -2}
+# martingale_manager.update_on_result(result)
 
-                    if result is not None:
-                        logging.info(f"Resultado do trade {trade_id}: {result}")
-                        self.update_on_result(result)
-
-                logging.info("Monitoramento de trades concluído. Aguardando 10 segundos...")
-            except Exception as e:
-                logging.error(f"Erro ao monitorar trades: {e}")
-
-            time.sleep(10)  # Aguarda 10 segundos antes de verificar novamente
+# # Iniciar monitoramento em uma thread
+# threading.Thread(target=martingale_manager.monitor_trades, daemon=True).start()
