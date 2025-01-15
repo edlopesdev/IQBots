@@ -62,7 +62,7 @@ on_message('not a json')
 
 
 # Inicializar a API IQ Option
-account_type = "PRATICE"  # Conta Real - ALTERADO PARA TESTE
+account_type = "REAL"  # Conta Real - AGORA É PRA VALER!
 instrument_types = ["binary", "crypto", "digital", "otc"]  # Tipos de instrumentos suportados
 
 # Definir variáveis globais
@@ -446,7 +446,7 @@ def monitor_trade(trade_id, asset):
 
 # Função para ignorar ativos específicos
 def ignore_assets(asset):
-    assets_to_ignore = ["yahoo", "twitter", "AGN:US", "CXO:US","DNB:US","DOW:US","DTE:US","DUK:US","DVA:US","DVN:US","DXC:US","DXCM:US"]
+    assets_to_ignore = ["YAHOO", "TWITTER", "AGN:US", "CXO:US","DNB:US","DOW:US","DTE:US","DUK:US","DVA:US","DVN:US","DXC:US","DXCM:US"]
     return asset.upper() in assets_to_ignore
 
 # Função para zerar limite de negociações simultâneas e iniciar checagem de resultados
