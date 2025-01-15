@@ -1,4 +1,4 @@
-# Arquivo: ACapybara.4.1.py
+# Arquivo: ACapybara.4.4.py
 
 from iqoptionapi.stable_api import IQ_Option
 import threading
@@ -611,7 +611,7 @@ def switch_account_type():
 
 # GUI Configuration
 root = tk.Tk()
-root.title("Capybara v4.1")
+root.title("Capybara Trader v4.4")
 root.configure(bg="#001209")
 
 static_icon = PhotoImage(file="static_icon.png")
@@ -663,4 +663,4 @@ update_log()
 update_session_profit()
 root.mainloop()
 
-# Fim do arquivo ACapybara.4.0.py
+# Fim do arquivo ACapybara.4.4.py

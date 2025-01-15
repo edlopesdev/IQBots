@@ -1,4 +1,4 @@
-# Arquivo: ACapybara.4.1.py
+# Arquivo: ASonic.0.7.py
 
 from iqoptionapi.stable_api import IQ_Option
 import threading
@@ -12,9 +12,10 @@ import pandas_ta as ta
 import json
 import logging
 import warnings
+import concurrent.futures
 
-# Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+class TimeoutException(Exception):
+    pass
 
 # Carregar credenciais do arquivo
 credentials_file = os.path.normpath(os.path.join(os.getcwd(), "credentials.txt"))
@@ -40,7 +41,7 @@ def log_message(message):
     except FileNotFoundError:
         with open(log_file, "w") as file:
             file.write(message + "\n")
-    logging.info(message)
+    print(message)
 
 # Função para tratar mensagens recebidas
 def on_message(message):
@@ -53,13 +54,10 @@ def on_message(message):
     except json.JSONDecodeError as e:
         logging.error(f"Erro ao decodificar mensagem JSON: {e}. Mensagem: {message}")
 
-
-
 # Exemplo de uso da função on_message
 on_message('{"key": "value"}')
 on_message('')
 on_message('not a json')
-
 
 # Inicializar a API IQ Option
 account_type = "PRATICE"  # Conta Real - ALTERADO PARA TESTE
@@ -79,6 +77,7 @@ win_count = 0  # Adicionar contagem de vitórias
 loss_count = 0  # Adicionar contagem de perdas
 iq = None  # Instância da API IQ Option
 trade_list = []
+
 # Conectar à API IQ Option
 def connect_to_iq_option(email, password):
     global iq
@@ -127,7 +126,6 @@ def fetch_sorted_assets():
 def add_trade_to_list(trade_id):
     global trade_list
     trade_list.append(trade_id)
-    print(f"Trade ID {trade_id} added to the monitoring list.")
     log_message(f"Trade ID {trade_id} added to the monitoring list.")
 
 def reconnect_if_needed():
@@ -148,10 +146,10 @@ def fetch_historical_data(asset, duration, candle_count):
     df["open"] = df["open"].astype(float)
     df["high"] = df["max"].astype(float)
     df["low"] = df["min"].astype(float)
+    df["volume"] = df["volume"].astype(float)  # Ensure volume is cast to float
     return df
 
- #Função para reconectar à API
-
+# Função para reconectar à API
 def reconnect():
     global iq
     while True:
@@ -170,7 +168,6 @@ def reconnect():
 threading.Thread(target=reconnect, daemon=True).start()
 
 # Atualização da função analyze_indicators
-
 def analyze_indicators(asset):
     if ignore_assets(asset):
         log_message(f"Ignorando ativo {asset}.")
@@ -258,9 +255,9 @@ def analyze_indicators(asset):
                 decisions.append("sell")
 
         if indicators.get("bollinger_low") is not None and indicators.get("bollinger_high") is not None:
-            if data["close"].iloc[-1] < indicators["bollinger_low"]:
+            if data["close"].iloc[-1] < indicators["bollinger_low"]():
                 decisions.append("buy")
-            elif data["close"].iloc[-1] > indicators["bollinger_high"]:
+            elif data["close"].iloc[-1] > indicators["bollinger_high"]():
                 decisions.append("sell")
 
         if indicators.get("cci") is not None:
@@ -315,8 +312,8 @@ def countdown(seconds):
         log_message(f"Aguardando {seconds} segundos...")
         time.sleep(1)
         seconds -= 1
-#Execução de trades
 
+# Execução de trades
 def execute_trades():
     global running
     global current_amount
@@ -337,9 +334,9 @@ def execute_trades():
                 log_message("Execução de negociações interrompida.")
                 break
 
-            if simultaneous_trades >= 1:  # Ensure only one trade at a time
-                log_message("Aguardando a conclusão da negociação atual...")
-                countdown(10)  # Shorter countdown to check trade results more frequently
+            if simultaneous_trades >= max_simultaneous_trades:
+                log_message("Limite máximo de negociações simultâneas atingido. Aguardando 5 minutos...")
+                countdown(300)  # 5-minute countdown
                 check_trade_results()
                 update_session_profit()
                 continue
@@ -353,7 +350,7 @@ def execute_trades():
                 log_message(f"Pulando negociação para {asset}. Sem consenso.")
                 continue
 
-            log_message(f"Tentando realizar negociação: Ativo={asset}, Ação={action}, Valor = R${current_amount}")
+            log_message(f"Tentando realizar negociação: Ativo={asset}, Ação={action}, Valor=${current_amount}")
 
             try:
                 success, trade_id = iq.buy(current_amount, asset, action, 5)
@@ -362,7 +359,6 @@ def execute_trades():
                     add_trade_to_list(trade_id)
                     log_message(f"Negociação realizada com sucesso para {asset}. ID da negociação={trade_id}")
                     threading.Thread(target=monitor_trade, args=(trade_id, asset)).start()
-                    countdown(300)  # Aguardando o fim da negociação
                 else:
                     log_message(f"Falha ao realizar negociação para {asset}.")
             except Exception as e:
@@ -373,30 +369,24 @@ def execute_trades():
         update_session_profit()
 
 # Atualização da função monitor_trade
-
 def monitor_trade(trade_id, asset):
     global simultaneous_trades
     global session_profit
     global consecutive_losses
     global current_amount
-    global win_count
-    global loss_count
 
     try:
-        print(f"Monitorando negociação {trade_id} para o ativo {asset}...")
         log_message(f"Monitorando negociação {trade_id} para o ativo {asset}...")
         result = None
         while result is None:
             try:
                 result = iq.check_win_v4(trade_id)
                 if result is None:
-                    print(f"Negociação {trade_id} ainda não concluída. Tentando novamente em 1 segundo...")
-                    log_message(f"Negociação {trade_id} ainda não concluída. Tentando novamente em 1 segundo...")
-                    time.sleep(1)
+                    log_message(f"Negociação {trade_id} ainda não concluída. Tentando novamente em 5 segundos...")
+                    time.sleep(5)
             except Exception as e:
-                print(f"Erro ao verificar status da negociação {trade_id}: {e}")
                 log_message(f"Erro ao verificar status da negociação {trade_id}: {e}")
-                time.sleep(1)
+                time.sleep(5)
 
         if isinstance(result, tuple):
             result = result[0]  # Assuming the first element of the tuple is the profit/loss value
@@ -409,42 +399,33 @@ def monitor_trade(trade_id, asset):
                 try:
                     result = float(result)  # Convert string to float
                 except ValueError:
-                    print(f"Erro ao converter resultado para float: {result}")
                     log_message(f"Erro ao converter resultado para float: {result}")
                     result = 0.0  # Default to 0.0 if conversion fails
 
         session_profit += result
-        if result > 0:
-            win_count += 1
-        else:
-            loss_count += 1
-
-        print(f"Resultado da negociação para {asset}: {'Vitória' if result > 0 else 'Perda'}, Lucro={result}")
         log_message(f"Resultado da negociação para {asset}: {'Vitória' if result > 0 else 'Perda'}, Lucro={result}")
 
         update_session_profit()
 
         if result < 0:
             consecutive_losses += 1
-            current_amount *= 2  # Double the amount for the next trade
-            print(f"Dobrar valor da negociação. Próximo valor de negociação: R${current_amount}")
-            log_message(f"Dobrar valor da negociação. Próximo valor de negociação: R${current_amount}")
             if consecutive_losses >= martingale_limit:
                 current_amount = initial_amount
                 consecutive_losses = 0
-                print("Limite do Martingale atingido. Redefinindo valor para o inicial.")
                 log_message("Limite do Martingale atingido. Redefinindo valor para o inicial.")
+            else:
+                current_amount *= 2
+                log_message(f"Dobrar valor da negociação. Próximo valor de negociação: ${current_amount}")
         else:
             consecutive_losses = 0
             current_amount = initial_amount
 
     finally:
         simultaneous_trades -= 1
-        trade_list.remove(trade_id)  # Ensure the trade is removed from the list after checking
 
 # Função para ignorar ativos específicos
 def ignore_assets(asset):
-    assets_to_ignore = ["yahoo", "twitter", "AGN:US", "CXO:US","DNB:US","DOW:US","DTE:US","DUK:US","DVA:US","DVN:US","DXC:US","DXCM:US"]
+    assets_to_ignore = ["YAHOO", "TWITTER"]
     return asset.upper() in assets_to_ignore
 
 # Função para zerar limite de negociações simultâneas e iniciar checagem de resultados
@@ -469,7 +450,6 @@ def decrease_simultaneous_trades():
 # Função para checar resultados de negociações
 def check_trade_results():
     global trade_list, session_profit, win_count, loss_count, current_amount, consecutive_losses
-    print("Checking trade results...")
     log_message("Checking trade results...")
     for trade_id in trade_list[:]:  # Iterate over a copy of the list
         try:
@@ -486,28 +466,24 @@ def check_trade_results():
                         try:
                             result = float(result)  # Convert string to float
                         except ValueError:
-                            print(f"Erro ao converter resultado para float: {result}")
                             log_message(f"Erro ao converter resultado para float: {result}")
                             result = 0.0  # Default to 0.0 if conversion fails
 
                 session_profit += result
+                log_message(f"Trade ID {trade_id} result: {'WIN' if result > 0 else 'LOSS'}, Profit: {result}, Session Profit: {session_profit}")
                 if result > 0:
                     win_count += 1
-                    consecutive_losses = 0
-                    current_amount = initial_amount  # Reset to initial amount after a win
                 else:
                     loss_count += 1
+                    session_profit -= abs(current_amount)  # Subtract the loss from the session profit
                     current_amount *= 2  # Double the amount for the next trade
                     if current_amount > initial_amount * (2 ** martingale_limit):
-                        print("Martingale limit reached. Resetting to initial amount.")
                         log_message("Martingale limit reached. Resetting to initial amount.")
                         current_amount = initial_amount
                 trade_list.remove(trade_id)  # Ensure the trade is removed from the list after checking
             else:
-                print(f"Trade ID {trade_id} is still open. Skipping for now.")
                 log_message(f"Trade ID {trade_id} is still open. Skipping for now.")
         except Exception as e:
-            print(f"Error checking result for trade ID {trade_id}: {e}")
             log_message(f"Error checking result for trade ID {trade_id}: {e}")
 
 def check_all_results():
@@ -592,7 +568,7 @@ def set_amount(amount):
     global current_amount
     initial_amount = amount
     current_amount = amount
-    log_message(f"Initial amount set to: R${initial_amount}")
+    log_message(f"Initial amount set to: ${initial_amount}")
 
 def switch_account_type():
     global account_type
@@ -611,12 +587,12 @@ def switch_account_type():
 
 # GUI Configuration
 root = tk.Tk()
-root.title("Capybara v4.1")
-root.configure(bg="#001209")
+root.title("Sonic v0.7")
+root.configure(bg="#05071f")
 
 static_icon = PhotoImage(file="static_icon.png")
-rotating_icon = PhotoImage(file="working_capy.png")
-icon_label = tk.Label(root, image=static_icon, bg="#001209")
+rotating_icon = PhotoImage(file="working_sonic.png")
+icon_label = tk.Label(root, image=static_icon, bg="#05071f")
 icon_label.grid(row=0, column=0, rowspan=2, padx=10, pady=10)
 
 start_button = tk.Button(root, text="Start", command=start_trading, bg="#4CAF50", fg="white", font=("Helvetica", 12))
@@ -628,7 +604,7 @@ stop_button.grid(row=0, column=2, padx=5, pady=5)
 switch_account_button = tk.Button(root, text="Switch Account", command=switch_account_type, bg="#2196F3", fg="white", font=("Helvetica", 12))
 switch_account_button.grid(row=0, column=3, padx=5, pady=5)
 
-amount_label = tk.Label(root, text="Initial Amount:", bg="#001209", fg="white", font=("Helvetica", 12))
+amount_label = tk.Label(root, text="Initial Amount:", bg="#05071f", fg="white", font=("Helvetica", 12))
 amount_label.grid(row=1, column=1, padx=5, pady=5)
 
 amount_entry = tk.Entry(root, font=("Helvetica", 12))
@@ -638,22 +614,22 @@ amount_entry.grid(row=1, column=2, padx=5, pady=5)
 set_button = tk.Button(root, text="Set Amount", command=lambda: set_amount(float(amount_entry.get())), bg="#FFC107", fg="black", font=("Helvetica", 12))
 set_button.grid(row=1, column=3, padx=5, pady=5)
 
-log_text = ScrolledText(root, height=10, font=("Courier", 10), bg="#001209", fg="white")
+log_text = ScrolledText(root, height=10, font=("Courier", 10), bg="#05071f", fg="white")
 log_text.grid(row=2, column=0, columnspan=5, padx=10, pady=10)
 
-profit_label = tk.Label(root, text="Lucro: R$0.00", font=("Helvetica", 16), bg="#001209", fg="white")
+profit_label = tk.Label(root, text="Lucro: R$0.00", font=("Helvetica", 16), bg="#05071f", fg="white")
 profit_label.grid(row=3, column=0, columnspan=5, padx=10, pady=10)
 
-win_label = tk.Label(root, text="Wins: 0", font=("Helvetica", 16), bg="#001209", fg="green")
+win_label = tk.Label(root, text="Wins: 0", font=("Helvetica", 16), bg="#05071f", fg="green")
 win_label.grid(row=4, column=0, columnspan=2, padx=10, pady=10)
 
-loss_label = tk.Label(root, text="Losses: 0", font=("Helvetica", 16), bg="#001209", fg="red")
+loss_label = tk.Label(root, text="Losses: 0", font=("Helvetica", 16), bg="#05071f", fg="red")
 loss_label.grid(row=4, column=2, columnspan=2, padx=10, pady=10)
 
 footer_label = tk.Label(
     root,
     text="@oedlopes - 2025  - Deus Seja Louvado",
-    bg="#001209",
+    bg="#05071f",
     fg="#A9A9A9",
     font=("Helvetica", 5)
 )

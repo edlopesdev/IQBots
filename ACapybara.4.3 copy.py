@@ -12,10 +12,6 @@ import pandas_ta as ta
 import json
 import logging
 import warnings
-
-# Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-
 # Carregar credenciais do arquivo
 credentials_file = os.path.normpath(os.path.join(os.getcwd(), "credentials.txt"))
 
@@ -40,7 +36,7 @@ def log_message(message):
     except FileNotFoundError:
         with open(log_file, "w") as file:
             file.write(message + "\n")
-    logging.info(message)
+    print(message)
 
 # Função para tratar mensagens recebidas
 def on_message(message):
@@ -353,7 +349,7 @@ def execute_trades():
                 log_message(f"Pulando negociação para {asset}. Sem consenso.")
                 continue
 
-            log_message(f"Tentando realizar negociação: Ativo={asset}, Ação={action}, Valor = R${current_amount}")
+            log_message(f"Tentando realizar negociação: Ativo={asset}, Ação={action}, Valor=${current_amount}")
 
             try:
                 success, trade_id = iq.buy(current_amount, asset, action, 5)
@@ -379,8 +375,6 @@ def monitor_trade(trade_id, asset):
     global session_profit
     global consecutive_losses
     global current_amount
-    global win_count
-    global loss_count
 
     try:
         print(f"Monitorando negociação {trade_id} para o ativo {asset}...")
@@ -414,11 +408,6 @@ def monitor_trade(trade_id, asset):
                     result = 0.0  # Default to 0.0 if conversion fails
 
         session_profit += result
-        if result > 0:
-            win_count += 1
-        else:
-            loss_count += 1
-
         print(f"Resultado da negociação para {asset}: {'Vitória' if result > 0 else 'Perda'}, Lucro={result}")
         log_message(f"Resultado da negociação para {asset}: {'Vitória' if result > 0 else 'Perda'}, Lucro={result}")
 
@@ -427,8 +416,8 @@ def monitor_trade(trade_id, asset):
         if result < 0:
             consecutive_losses += 1
             current_amount *= 2  # Double the amount for the next trade
-            print(f"Dobrar valor da negociação. Próximo valor de negociação: R${current_amount}")
-            log_message(f"Dobrar valor da negociação. Próximo valor de negociação: R${current_amount}")
+            print(f"Dobrar valor da negociação. Próximo valor de negociação: ${current_amount}")
+            log_message(f"Dobrar valor da negociação. Próximo valor de negociação: ${current_amount}")
             if consecutive_losses >= martingale_limit:
                 current_amount = initial_amount
                 consecutive_losses = 0
@@ -444,7 +433,7 @@ def monitor_trade(trade_id, asset):
 
 # Função para ignorar ativos específicos
 def ignore_assets(asset):
-    assets_to_ignore = ["yahoo", "twitter", "AGN:US", "CXO:US","DNB:US","DOW:US","DTE:US","DUK:US","DVA:US","DVN:US","DXC:US","DXCM:US"]
+    assets_to_ignore = ["YAHOO", "TWITTER"]
     return asset.upper() in assets_to_ignore
 
 # Função para zerar limite de negociações simultâneas e iniciar checagem de resultados
@@ -491,6 +480,8 @@ def check_trade_results():
                             result = 0.0  # Default to 0.0 if conversion fails
 
                 session_profit += result
+                print(f"Trade ID {trade_id} result: {'WIN' if result > 0 else 'LOSS'}, Profit: {result}, Session Profit: {session_profit}")
+                log_message(f"Trade ID {trade_id} result: {'WIN' if result > 0 else 'LOSS'}, Profit: {result}, Session Profit: {session_profit}")
                 if result > 0:
                     win_count += 1
                     consecutive_losses = 0
@@ -585,14 +576,14 @@ def update_log():
         root.after(1000, update_log)
 
 def update_session_profit():
-    profit_label.config(text=f"Lucro: R${session_profit:.2f}", fg="green" if session_profit >= 0 else "red")
+    profit_label.config(text=f"Session Profit: ${session_profit:.2f}", fg="green" if session_profit >= 0 else "red")
 
 def set_amount(amount):
     global initial_amount
     global current_amount
     initial_amount = amount
     current_amount = amount
-    log_message(f"Initial amount set to: R${initial_amount}")
+    log_message(f"Initial amount set to: ${initial_amount}")
 
 def switch_account_type():
     global account_type
@@ -641,7 +632,7 @@ set_button.grid(row=1, column=3, padx=5, pady=5)
 log_text = ScrolledText(root, height=10, font=("Courier", 10), bg="#001209", fg="white")
 log_text.grid(row=2, column=0, columnspan=5, padx=10, pady=10)
 
-profit_label = tk.Label(root, text="Lucro: R$0.00", font=("Helvetica", 16), bg="#001209", fg="white")
+profit_label = tk.Label(root, text="Session Profit: R$0.00", font=("Helvetica", 16), bg="#001209", fg="white")
 profit_label.grid(row=3, column=0, columnspan=5, padx=10, pady=10)
 
 win_label = tk.Label(root, text="Wins: 0", font=("Helvetica", 16), bg="#001209", fg="green")
