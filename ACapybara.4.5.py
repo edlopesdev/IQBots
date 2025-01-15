@@ -1,4 +1,4 @@
-# Arquivo: ACapybara.4.4.py
+# Arquivo: ACapybara.4.5.py
 
 from iqoptionapi.stable_api import IQ_Option
 import threading
@@ -340,7 +340,7 @@ def execute_trades():
             if simultaneous_trades >= 1:  # Ensure only one trade at a time
                 log_message("Aguardando a conclusão da negociação atual...")
                 countdown(10)  # Shorter countdown to check trade results more frequently
-                check_trade_results()
+                
                 update_session_profit()
                 continue
 
@@ -482,9 +482,9 @@ def check_trade_results():
                     result = result[0]  # Assuming the first element of the tuple is the profit/loss value
                 if isinstance(result, str):
                     if result.lower() == "win":
-                        result = 1.0
+                        win_count += 1.0
                     elif result.lower() == "loose":
-                        result = -1.0
+                        loss_count += 1.0
                     else:
                         try:
                             result = float(result)  # Convert string to float
@@ -494,12 +494,10 @@ def check_trade_results():
                             result = 0.0  # Default to 0.0 if conversion fails
 
                 session_profit += result
-                if result > 0:
-                    win_count += 1
+                if result > 0:                    
                     consecutive_losses = 0
                     current_amount = initial_amount  # Reset to initial amount after a win
-                else:
-                    loss_count += 1
+                else:                    
                     consecutive_losses += 1
                     if consecutive_losses < martingale_limit:
                         current_amount *= 2  # Double the amount for the next trade
@@ -619,7 +617,7 @@ def switch_account_type():
 
 # GUI Configuration
 root = tk.Tk()
-root.title("Capybara Trader v4.4")
+root.title("Capybara Trader v4.5")
 root.configure(bg="#001209")
 
 static_icon = PhotoImage(file="static_icon.png")
@@ -671,4 +669,4 @@ update_log()
 update_session_profit()
 root.mainloop()
 
-# Fim do arquivo ACapybara.4.4.py
+# Fim do arquivo ACapybara.4.5.py
