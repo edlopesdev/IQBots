@@ -1,5 +1,3 @@
-# ...existing code...
-
 # Arquivo: Capybara.GF.0.1.py
 #PECUNIA IMPROMPTA
 from iqoptionapi.stable_api import IQ_Option
@@ -127,10 +125,6 @@ saldo_entrada = 0  # Saldo na hora de começar uma operação
 saldo_saida = 0  # Saldo no fim da operação
 amount_doubled = False  # Flag to track if the amount has been doubled
 
-# Define preset trade value
-auto_initial_amount = 2
-smart_stop = False
-
 # Conectar à API IQ Option
 def connect_to_iq_option(email, password):
     global iq
@@ -248,40 +242,7 @@ assets_to_ignore = set(["CSGNZ-CHIX","TA25","DUBAI","YAHOO", "TWITTER", "AGN:US"
 def ignore_assets(asset):
     return asset.upper() in assets_to_ignore or "-CHIX" in asset.upper() or "XEMUSD-" in asset.upper() or "BSVUSD-" in asset.upper()
 
-def analyze_trend(data):
-    """
-    Analyzes the trend of the last 30 candles.
-    Returns 'up', 'down', or 'neutral' based on the analysis.
-    """
-    if len(data) < 30:
-        log_message("Dados insuficientes para análise de tendência.")
-        return "neutral"
-
-    if data["close"].iloc[-30:].mean() > data["open"].iloc[-30:].mean():
-        return "up"
-    elif data["close"].iloc[-30:].mean() < data["open"].iloc[-30:].mean():
-        return "down"
-    else:
-        return "neutral"
-
-def analyze_last_candles(data):
-    """
-    Analyzes the last 5 candles of 5 seconds each.
-    Returns 'up', 'down', or 'neutral' based on the analysis.
-    """
-    if len(data) < 5:
-        log_message("Dados insuficientes para análise dos últimos candles.")
-        return "neutral"
-
-    first_candle = data.iloc[-5]
-    if first_candle["close"] > first_candle["open"]:
-        return "up"
-    elif first_candle["close"] < first_candle["open"]:
-        return "down"
-    else:
-        return "neutral"
-
-# Update the analyze_indicators function to include the new indicators
+# Atualização da função analyze_indicators
 def analyze_indicators(asset):
     if ignore_assets(asset):
         log_message(f"Ignorando ativo {asset}.")
@@ -328,8 +289,7 @@ def analyze_indicators(asset):
             "tsi": lambda: ta.tsi(data["close"]),
             "aroon_up": lambda: ta.aroon(data["high"], data["low"], length=25)["AROONU_25"],
             "aroon_down": lambda: ta.aroon(data["high"], data["low"], length=25)["AROOND_25"],
-            "trend": lambda: analyze_trend(data),
-            "last_candles": lambda: analyze_last_candles(data)
+            "grande_filtro": lambda: grande_filtro(data)
         }
 
         for key, func in available_indicators.items():
@@ -338,7 +298,7 @@ def analyze_indicators(asset):
                     warnings.filterwarnings("error", category=FutureWarning)
                     result = func()
                     if result is not None and not result.empty:
-                        indicators[key] = result.iloc[-1] if isinstance(result, pd.Series) else result
+                        indicators[key] = result.iloc[-1]
             except FutureWarning as fw:
                 log_message(f"FutureWarning ao calcular {key.upper()} para {asset}: {fw}. Pulando ativo.")
                 return None
@@ -414,17 +374,8 @@ def analyze_indicators(asset):
             if indicators["aroon_down"] > 70:
                 decisions.append("sell")
 
-        if indicators.get("trend") is not None:
-            if indicators["trend"] == "up":
-                decisions.append("buy")
-            elif indicators["trend"] == "down":
-                decisions.append("sell")
-
-        if indicators.get("last_candles") is not None:
-            if indicators["last_candles"] == "up":
-                decisions.append("buy")
-            elif indicators["last_candles"] == "down":
-                decisions.append("sell")
+        if indicators.get("grande_filtro") is not None:
+            decisions.append(indicators["grande_filtro"])
 
         buy_votes = decisions.count("buy")
         sell_votes = decisions.count("sell")
@@ -443,7 +394,37 @@ def analyze_indicators(asset):
         log_message(f"Erro ao analisar indicadores para {asset}: {e}")
         return None
 
-# ...existing code...
+def grande_filtro(data):
+    """
+    Analyzes the last 5 candles of 5 seconds each and the trend of the last 30 candles.
+    Returns 'buy', 'sell', or None based on the analysis.
+    """
+    if len(data) < 30:
+        log_message("Dados insuficientes para análise do Grande Filtro.")
+        return None
+
+    # Analyze the trend of the last 30 candles
+    trend = "neutral"
+    if data["close"].iloc[-30:].mean() > data["open"].iloc[-30:].mean():
+        trend = "up"
+    elif data["close"].iloc[-30:].mean() < data["open"].iloc[-30:].mean():
+        trend = "down"
+
+    # Analyze the last 5 candles of 5 seconds each
+    first_candle = data.iloc[-5]
+    next_candle_direction = "neutral"
+    if first_candle["close"] > first_candle["open"]:
+        next_candle_direction = "up"
+    elif first_candle["close"] < first_candle["open"]:
+        next_candle_direction = "down"
+
+    # Determine the vote based on the trend and the next candle direction
+    if trend == "up" and next_candle_direction == "up":
+        return "buy"
+    elif trend == "down" and next_candle_direction == "down":
+        return "sell"
+    else:
+        return None
 
 # Adapted countdown function
 def countdown(seconds):
@@ -515,11 +496,6 @@ def execute_trades():
         check_trade_results()
         update_session_profit()
 
-        if smart_stop and current_amount == initial_amount:
-            running = False
-            log_message("Smart Stop ativado. Parando execução após reset para valor inicial.")
-            break
-
 def monitor_trade(trade_id, asset):
     global simultaneous_trades
     global session_profit
@@ -575,12 +551,12 @@ def monitor_trade(trade_id, asset):
                 log_message(f"Dobrar valor da negociação. Próximo valor de negociação: R${current_amount}")
             else:
                 log_message("Martingale limit reached. Resetting to initial amount.")
-                set_amount()  # Reset to 10% of the balance
+                current_amount = initial_amount
                 consecutive_losses = 0
                 amount_doubled = False  # Reset the flag
         else:
             consecutive_losses = 0
-            set_amount()  # Reset to 10% of the balance after a win
+            current_amount = initial_amount  # Reset to initial amount after a win
             amount_doubled = False  # Reset the flag
             log_message(f"Negociação bem-sucedida. Valor de negociação resetado para: R${current_amount}")
 
@@ -627,12 +603,12 @@ def check_trade_results():
                         log_message(f"Dobrar valor da negociação. Próximo valor de negociação: R${current_amount}")
                     else:
                         log_message("Martingale limit reached. Resetting to initial amount.")
-                        set_amount()  # Reset to 10% of the balance
+                        current_amount = initial_amount
                         consecutive_losses = 0
                         amount_doubled = False  # Reset the flag
                 else:
                     consecutive_losses = 0
-                    set_amount()  # Reset to 10% of the balance after a win
+                    current_amount = initial_amount  # Reset to initial amount after a win
                     amount_doubled = False  # Reset the flag
                     log_message(f"Negociação bem-sucedida. Valor de negociação resetado para: R${current_amount}")
 
@@ -658,11 +634,9 @@ def start_trading():
 # Função para parar a execução de trades
 def stop_trading():
     global running
-    global smart_stop
-    smart_stop = True
     running = False
     icon_label.config(image=static_icon)
-    log_message("Smart Stop ativado. Parando execução após reset para valor inicial.")
+    log_message("Trading session stopped.")
 
 def update_log():
     try:
@@ -676,15 +650,12 @@ def update_log():
     if running:
         root.after(1000, update_log)
 
-# Update the set_amount function to use 10% of the account balance
-def set_amount():
+def set_amount(amount):
     global initial_amount
     global current_amount
-    balance = iq.get_balance()
-    initial_amount = balance * 0.10
-    current_amount = initial_amount
-    log_message(f"Initial amount set to 10% of balance: R${initial_amount:.2f}")
-    balance_label.config(text=f"Balance: R${balance:.2f}")
+    initial_amount = amount
+    current_amount = amount
+    log_message(f"Initial amount set to: R${initial_amount}")
 
 # Function to stop and start trading if the code freezes for more than 15 seconds
 def watchdog():
@@ -716,21 +687,28 @@ icon_label.grid(row=0, column=0, rowspan=2, padx=10, pady=10)
 start_button = tk.Button(root, text="Start", command=start_trading, bg="#4CAF50", fg="white", font=("Helvetica", 12))
 start_button.grid(row=0, column=1, padx=5, pady=5)
 
-stop_button = tk.Button(root, text="Smart Stop", command=stop_trading, bg="#F44336", fg="white", font=("Helvetica", 12))
+stop_button = tk.Button(root, text="Stop", command=stop_trading, bg="#F44336", fg="white", font=("Helvetica", 12))
 stop_button.grid(row=0, column=2, padx=5, pady=5)
 
-balance_label = tk.Label(root, text="Balance: R$0.00", bg="#001209", fg="white", font=("Helvetica", 12))
-balance_label.grid(row=1, column=1, columnspan=2, padx=5, pady=5)
+amount_label = tk.Label(root, text="Initial Amount:", bg="#001209", fg="white", font=("Helvetica", 12))
+amount_label.grid(row=1, column=1, padx=5, pady=5)
+
+amount_entry = tk.Entry(root, font=("Helvetica", 12))
+amount_entry.insert(0, "2")
+amount_entry.grid(row=1, column=2, padx=5, pady=5)
+
+set_button = tk.Button(root, text="Set Amount", command=lambda: set_amount(float(amount_entry.get())), bg="#FFC107", fg="black", font=("Helvetica", 12))
+set_button.grid(row=1, column=3, padx=5, pady=5)
 
 log_text = ScrolledText(root, height=10, font=("Courier", 10), bg="#001209", fg="white")
-log_text.grid(row=3, column=0, columnspan=5, padx=10, pady=10)
+log_text.grid(row=2, column=0, columnspan=5, padx=10, pady=10)
 
 # Redirect stdout and stderr to the log_text widget
 sys.stdout = TextRedirector(log_text, "stdout")
 sys.stderr = TextRedirector(log_text, "stderr")
 
 profit_label = tk.Label(root, text="Lucro: R$0.00", font=("Helvetica", 16), bg="#001209", fg="white")
-profit_label.grid(row=4, column=0, columnspan=5, padx=10, pady=10)
+profit_label.grid(row=3, column=0, columnspan=5, padx=10, pady=10)
 
 footer_label = tk.Label(
     root,
@@ -744,23 +722,3 @@ footer_label.grid(row=5, column=0, columnspan=4, padx=10, pady=5, sticky="nsew")
 update_log()
 update_session_profit()
 root.mainloop()
-
-# ...existing code...
-
-def update_open_trades_label():
-    if running:
-        root.after(1000, update_open_trades_label)
-
-# Start updating the open trades label
-update_open_trades_label()
-
-# Ensure balance is fetched and initial amount is set at the start
-connect_to_iq_option(email, password)
-set_amount()
-
-# Update balance label on initialization
-balance_label.config(text=f"Balance: R${iq.get_balance():.2f}")
-
-# ...existing code...
-
-

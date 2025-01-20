@@ -723,14 +723,14 @@ balance_label = tk.Label(root, text="Balance: R$0.00", bg="#001209", fg="white",
 balance_label.grid(row=1, column=1, columnspan=2, padx=5, pady=5)
 
 log_text = ScrolledText(root, height=10, font=("Courier", 10), bg="#001209", fg="white")
-log_text.grid(row=3, column=0, columnspan=5, padx=10, pady=10)
+log_text.grid(row=2, column=0, columnspan=5, padx=10, pady=10)
 
 # Redirect stdout and stderr to the log_text widget
 sys.stdout = TextRedirector(log_text, "stdout")
 sys.stderr = TextRedirector(log_text, "stderr")
 
 profit_label = tk.Label(root, text="Lucro: R$0.00", font=("Helvetica", 16), bg="#001209", fg="white")
-profit_label.grid(row=4, column=0, columnspan=5, padx=10, pady=10)
+profit_label.grid(row=3, column=0, columnspan=5, padx=10, pady=10)
 
 footer_label = tk.Label(
     root,
@@ -744,23 +744,3 @@ footer_label.grid(row=5, column=0, columnspan=4, padx=10, pady=5, sticky="nsew")
 update_log()
 update_session_profit()
 root.mainloop()
-
-# ...existing code...
-
-def update_open_trades_label():
-    if running:
-        root.after(1000, update_open_trades_label)
-
-# Start updating the open trades label
-update_open_trades_label()
-
-# Ensure balance is fetched and initial amount is set at the start
-connect_to_iq_option(email, password)
-set_amount()
-
-# Update balance label on initialization
-balance_label.config(text=f"Balance: R${iq.get_balance():.2f}")
-
-# ...existing code...
-
-
