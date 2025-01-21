@@ -1,6 +1,6 @@
 # ...existing code...
 
-# Arquivo: Capybara.GF.0.1.py
+# Arquivo: SonicGF.1.1.py
 #PECUNIA IMPROMPTA
 from iqoptionapi.stable_api import IQ_Option
 import threading
@@ -154,7 +154,7 @@ def connect_to_iq_option(email, password):
 
 # Adapted fetch_sorted_assets function
 def fetch_sorted_assets():
-    logging.info("Buscando e classificando ativos por lucratividade e volume para negociações de 5 minutos...")
+    logging.info("Buscando e classificando ativos por lucratividade e volume para negociações de 1 minuto...")
     reconnect_if_needed()
 
     if iq is None:
@@ -171,7 +171,7 @@ def fetch_sorted_assets():
         volume = {}
         for asset, values in raw_profitability.items():
             if isinstance(values, dict):  # Tratamento para defaultdict
-                profitability[asset] = float(values.get('turbo', 0.0))  # 'turbo' is used for 5-minute trades
+                profitability[asset] = float(values.get('turbo', 0.0))  # 'turbo' is used for 1-minute trades
             else:
                 profitability[asset] = float(values)
 
@@ -185,7 +185,7 @@ def fetch_sorted_assets():
             reverse=True
         )
 
-        log_message(f"Ativos classificados por lucratividade e volume para negociações de 5 minutos: {sorted_assets}")
+        log_message(f"Ativos classificados por lucratividade e volume para negociações de 1 minuto: {sorted_assets}")
         return sorted_assets
     except Exception as e:
         log_message(f"Erro ao buscar e classificar ativos: {e}")
@@ -476,7 +476,7 @@ def execute_trades():
 
             if simultaneous_trades >= 1:  # Ensure only one trade at a time
                 log_message("Aguardando a conclusão da negociação atual...")
-                countdown(50)  # Adjusted countdown for 5-minute trades
+                countdown(50)  # Adjusted countdown for 1-minute trades
                 check_trade_results()
                 update_session_profit()
                 continue
@@ -498,14 +498,14 @@ def execute_trades():
             saldo_entrada = iq.get_balance()  # Store balance before trade
             print(f"Balance before opening trade: {saldo_entrada}")  # Display balance before trade
             try:
-                success, trade_id = iq.buy(current_amount, asset, action, 5)  # Negociações de 5 minutos
+                success, trade_id = iq.buy(current_amount, asset, action, 1)  # Negociações de 1 minuto
                 if success:
                     simultaneous_trades += 1
                     add_trade_to_list(trade_id)
                     log_message(f"Negociação realizada com sucesso para {asset}. ID da negociação={trade_id}")
                     print(f"Balance after opening trade: {iq.get_balance()}")  # Display balance after opening trade
                     threading.Thread(target=monitor_trade, args=(trade_id, asset)).start()
-                    countdown(300)  # Aguardando o fim da negociação de 5 minutos
+                    countdown(60)  # Aguardando o fim da negociação de 1 minuto
                 else:
                     log_message(f"Falha ao realizar negociação para {asset}.")
             except Exception as e:
@@ -574,13 +574,22 @@ def monitor_trade(trade_id, asset):
                 amount_doubled = True  # Set the flag to indicate the amount has been doubled
                 log_message(f"Dobrar valor da negociação. Próximo valor de negociação: R${current_amount}")
             else:
-                log_message("Martingale limit reached. Resetting to initial amount.")
-                set_amount()  # Reset to 10% of the balance
+                log_message("Martingale limit reached. Reversing trade direction.")
+                decision = analyze_indicators(asset)
+                if decision == "buy":
+                    action = "put"
+                elif decision == "sell":
+                    action = "call"
+                else:
+                    log_message(f"Pulando negociação para {asset}. Sem consenso.")
+                    return
+                current_amount *= 2  # Continue doubling the amount
+                log_message(f"Reversed trade direction. Próximo valor de negociação: R${current_amount}, Ação={action}")
                 consecutive_losses = 0
                 amount_doubled = False  # Reset the flag
         else:
             consecutive_losses = 0
-            set_amount()  # Reset to 10% of the balance after a win
+            set_amount()  # Reset to 2% of the balance after a win
             amount_doubled = False  # Reset the flag
             log_message(f"Negociação bem-sucedida. Valor de negociação resetado para: R${current_amount}")
 
@@ -626,13 +635,22 @@ def check_trade_results():
                         amount_doubled = True  # Set the flag to indicate the amount has been doubled
                         log_message(f"Dobrar valor da negociação. Próximo valor de negociação: R${current_amount}")
                     else:
-                        log_message("Martingale limit reached. Resetting to initial amount.")
-                        set_amount()  # Reset to 10% of the balance
+                        log_message("Martingale limit reached. Reversing trade direction.")
+                        decision = analyze_indicators(asset)
+                        if decision == "buy":
+                            action = "put"
+                        elif decision == "sell":
+                            action = "call"
+                        else:
+                            log_message(f"Pulando negociação para {asset}. Sem consenso.")
+                            return
+                        current_amount *= 2  # Continue doubling the amount
+                        log_message(f"Reversed trade direction. Próximo valor de negociação: R${current_amount}, Ação={action}")
                         consecutive_losses = 0
                         amount_doubled = False  # Reset the flag
                 else:
                     consecutive_losses = 0
-                    set_amount()  # Reset to 10% of the balance after a win
+                    set_amount()  # Reset to 2% of the balance after a win
                     amount_doubled = False  # Reset the flag
                     log_message(f"Negociação bem-sucedida. Valor de negociação resetado para: R${current_amount}")
 
@@ -676,14 +694,14 @@ def update_log():
     if running:
         root.after(1000, update_log)
 
-# Update the set_amount function to use 10% of the account balance
+# Update the set_amount function to use 2% of the account balance
 def set_amount():
     global initial_amount
     global current_amount
     balance = iq.get_balance()
-    initial_amount = balance * 0.10
+    initial_amount = balance * 0.02  # Set to 2% of the balance
     current_amount = initial_amount
-    log_message(f"Initial amount set to 10% of balance: R${initial_amount:.2f}")
+    log_message(f"Initial amount set to 2% of balance: R${initial_amount:.2f}")
     balance_label.config(text=f"Balance: R${balance:.2f}")
 
 # Function to stop and start trading if the code freezes for more than 15 seconds
@@ -705,33 +723,33 @@ threading.Thread(target=watchdog, daemon=True).start()
 
 # GUI Configuration
 root = tk.Tk()
-root.title("Capybara Trader GFv0.1")
-root.configure(bg="#001209")
+root.title("Sonic Trader GFv1.1")
+root.configure(bg="#16032e")
 
-rotating_icon = PhotoImage(file="working_capy.png")
-icon_label = tk.Label(root, image=rotating_icon, bg="#001209")
+rotating_icon = PhotoImage(file="working_sonic.png")
+icon_label = tk.Label(root, image=rotating_icon, bg="#16032e")
 icon_label.grid(row=0, column=0, rowspan=2, padx=10, pady=10)
 
 stop_button = tk.Button(root, text="Smart Stop", command=stop_trading, bg="#F44336", fg="white", font=("Helvetica", 12))
 stop_button.grid(row=0, column=1, padx=5, pady=5)
 
-balance_label = tk.Label(root, text="Balance: R$0.00", bg="#001209", fg="white", font=("Helvetica", 12))
+balance_label = tk.Label(root, text="Balance: R$0.00", bg="#16032e", fg="white", font=("Helvetica", 12))
 balance_label.grid(row=1, column=1, columnspan=2, padx=5, pady=5)
 
-log_text = ScrolledText(root, height=10, font=("Courier", 10), bg="#001209", fg="white")
+log_text = ScrolledText(root, height=10, font=("Courier", 10), bg="#16032e", fg="white")
 log_text.grid(row=3, column=0, columnspan=5, padx=10, pady=10)
 
 # Redirect stdout and stderr to the log_text widget
 sys.stdout = TextRedirector(log_text, "stdout")
 sys.stderr = TextRedirector(log_text, "stderr")
 
-profit_label = tk.Label(root, text="Lucro: R$0.00", font=("Helvetica", 16), bg="#001209", fg="white")
+profit_label = tk.Label(root, text="Lucro: R$0.00", font=("Helvetica", 16), bg="#16032e", fg="white")
 profit_label.grid(row=4, column=0, columnspan=5, padx=10, pady=10)
 
 footer_label = tk.Label(
     root,
      text="@oedlopes - 2025  - Deus Seja Louvado - Sola Scriptura - Sola Fide - Solus Christus - Sola Gratia - Soli Deo Gloria",
-    bg="#001209",
+    bg="#16032e",
     fg="#A9A9A9",
     font=("Helvetica", 7)
 )
@@ -762,5 +780,3 @@ set_amount()
 balance_label.config(text=f"Balance: R${iq.get_balance():.2f}")
 
 # ...existing code...
-
-

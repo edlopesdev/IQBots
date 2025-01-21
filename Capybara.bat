@@ -9,5 +9,5 @@ IF ERRORLEVEL 1 (
 
 REM Executa o script Python
 martingalemanager.py
-python CapybaraGF.0.5.py
+python CapybaraGF.0.6.py
 pause

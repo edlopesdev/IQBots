@@ -8,5 +8,5 @@ IF ERRORLEVEL 1 (
 )
 
 REM Executa o script Python
-python ASonic.1.0.py
+python SonicGF.1.1.py
 pause

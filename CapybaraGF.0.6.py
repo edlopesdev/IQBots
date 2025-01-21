@@ -1,6 +1,6 @@
 # ...existing code...
 
-# Arquivo: Capybara.GF.0.1.py
+# Arquivo: Capybara.GF.0.6.py
 #PECUNIA IMPROMPTA
 from iqoptionapi.stable_api import IQ_Option
 import threading
@@ -574,13 +574,22 @@ def monitor_trade(trade_id, asset):
                 amount_doubled = True  # Set the flag to indicate the amount has been doubled
                 log_message(f"Dobrar valor da negociação. Próximo valor de negociação: R${current_amount}")
             else:
-                log_message("Martingale limit reached. Resetting to initial amount.")
-                set_amount()  # Reset to 10% of the balance
+                log_message("Martingale limit reached. Reversing trade direction.")
+                decision = analyze_indicators(asset)
+                if decision == "buy":
+                    action = "put"
+                elif decision == "sell":
+                    action = "call"
+                else:
+                    log_message(f"Pulando negociação para {asset}. Sem consenso.")
+                    return
+                current_amount *= 2  # Continue doubling the amount
+                log_message(f"Reversed trade direction. Próximo valor de negociação: R${current_amount}, Ação={action}")
                 consecutive_losses = 0
                 amount_doubled = False  # Reset the flag
         else:
             consecutive_losses = 0
-            set_amount()  # Reset to 10% of the balance after a win
+            set_amount()  # Reset to 2% of the balance after a win
             amount_doubled = False  # Reset the flag
             log_message(f"Negociação bem-sucedida. Valor de negociação resetado para: R${current_amount}")
 
@@ -626,13 +635,22 @@ def check_trade_results():
                         amount_doubled = True  # Set the flag to indicate the amount has been doubled
                         log_message(f"Dobrar valor da negociação. Próximo valor de negociação: R${current_amount}")
                     else:
-                        log_message("Martingale limit reached. Resetting to initial amount.")
-                        set_amount()  # Reset to 10% of the balance
+                        log_message("Martingale limit reached. Reversing trade direction.")
+                        decision = analyze_indicators(asset)
+                        if decision == "buy":
+                            action = "put"
+                        elif decision == "sell":
+                            action = "call"
+                        else:
+                            log_message(f"Pulando negociação para {asset}. Sem consenso.")
+                            return
+                        current_amount *= 2  # Continue doubling the amount
+                        log_message(f"Reversed trade direction. Próximo valor de negociação: R${current_amount}, Ação={action}")
                         consecutive_losses = 0
                         amount_doubled = False  # Reset the flag
                 else:
                     consecutive_losses = 0
-                    set_amount()  # Reset to 10% of the balance after a win
+                    set_amount()  # Reset to 2% of the balance after a win
                     amount_doubled = False  # Reset the flag
                     log_message(f"Negociação bem-sucedida. Valor de negociação resetado para: R${current_amount}")
 
@@ -676,14 +694,14 @@ def update_log():
     if running:
         root.after(1000, update_log)
 
-# Update the set_amount function to use 10% of the account balance
+# Update the set_amount function to use 2% of the account balance
 def set_amount():
     global initial_amount
     global current_amount
     balance = iq.get_balance()
-    initial_amount = balance * 0.10
+    initial_amount = balance * 0.02  # Set to 2% of the balance
     current_amount = initial_amount
-    log_message(f"Initial amount set to 10% of balance: R${initial_amount:.2f}")
+    log_message(f"Initial amount set to 2% of balance: R${initial_amount:.2f}")
     balance_label.config(text=f"Balance: R${balance:.2f}")
 
 # Function to stop and start trading if the code freezes for more than 15 seconds
@@ -705,7 +723,7 @@ threading.Thread(target=watchdog, daemon=True).start()
 
 # GUI Configuration
 root = tk.Tk()
-root.title("Capybara Trader GFv0.1")
+root.title("Capybara Trader GFv0.6")
 root.configure(bg="#001209")
 
 rotating_icon = PhotoImage(file="working_capy.png")
