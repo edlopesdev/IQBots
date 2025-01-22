@@ -569,7 +569,7 @@ def monitor_trade(trade_id, asset):
 
         if result <= 0:
             consecutive_losses += 1
-            if consecutive_losses < martingale_limit:
+            if consecutive_losses < 4:  # Change to 4 instead of 5
                 current_amount *= 2  # Double the amount for the next trade
                 amount_doubled = True  # Set the flag to indicate the amount has been doubled
                 log_message(f"Dobrar valor da negociação. Próximo valor de negociação: R${current_amount}")
@@ -577,9 +577,9 @@ def monitor_trade(trade_id, asset):
                 log_message("Martingale limit reached. Reversing trade direction.")
                 decision = analyze_indicators(asset)
                 if decision == "buy":
-                    action = "put"
+                    action = "put"  # Reverse the decision
                 elif decision == "sell":
-                    action = "call"
+                    action = "call"  # Reverse the decision
                 else:
                     log_message(f"Pulando negociação para {asset}. Sem consenso.")
                     return
@@ -630,7 +630,7 @@ def check_trade_results():
 
                 if result <= 0:
                     consecutive_losses += 1
-                    if consecutive_losses < martingale_limit:
+                    if consecutive_losses < 4:  # Change to 4 instead of 5
                         current_amount *= 2  # Double the amount for the next trade
                         amount_doubled = True  # Set the flag to indicate the amount has been doubled
                         log_message(f"Dobrar valor da negociação. Próximo valor de negociação: R${current_amount}")
@@ -638,9 +638,9 @@ def check_trade_results():
                         log_message("Martingale limit reached. Reversing trade direction.")
                         decision = analyze_indicators(asset)
                         if decision == "buy":
-                            action = "put"
+                            action = "put"  # Reverse the decision
                         elif decision == "sell":
-                            action = "call"
+                            action = "call"  # Reverse the decision
                         else:
                             log_message(f"Pulando negociação para {asset}. Sem consenso.")
                             return
