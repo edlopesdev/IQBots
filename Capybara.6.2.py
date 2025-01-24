@@ -1047,3 +1047,4 @@ if invalid_credentials:
     log_text.insert(tk.END, "Invalid credentials. Please check the credentials.txt file.\n")
 
 root.mainloop()
+
