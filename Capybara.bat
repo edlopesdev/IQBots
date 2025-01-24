@@ -8,6 +8,5 @@ IF ERRORLEVEL 1 (
 )
 
 REM Executa o script Python
-martingalemanager.py
-python Capybara0.9.py
+python Capybara.6.2.py
 pause
