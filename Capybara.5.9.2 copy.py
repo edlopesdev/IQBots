@@ -1,7 +1,6 @@
-#!/usr/bin/env python
 # ...existing code...
 
-# Arquivo: Capybara.6.2.py
+# Arquivo: Capybara.5.9.py
 #PECUNIA IMPROMPTA
 from iqoptionapi.stable_api import IQ_Option
 import threading
@@ -16,26 +15,6 @@ import json
 import logging
 import warnings
 import sys
-import talib
-import btalib
-import finta
-import statsmodels.api as sm
-from pyti.relative_strength_index import relative_strength_index as pyti_rsi
-from pyti.moving_average_convergence_divergence import moving_average_convergence_divergence as pyti_macd
-from pyti.simple_moving_average import simple_moving_average as pyti_sma
-from pyti.exponential_moving_average import exponential_moving_average as pyti_ema
-from pyti.bollinger_bands import percent_b as pyti_bollinger
-from pyti.average_true_range import average_true_range as pyti_atr
-from pyti.stochastic import percent_k as pyti_stochastic
-from pyti.williams_percent_r import williams_percent_r as pyti_willr
-from pyti.commodity_channel_index import commodity_channel_index as pyti_cci
-from pyti.rate_of_change import rate_of_change as pyti_roc
-from pyti.on_balance_volume import on_balance_volume as pyti_obv
-from pyti.money_flow_index import money_flow_index as pyti_mfi
-from pyti.detrended_price_oscillator import detrended_price_oscillator as pyti_dpo
-from pyti.ultimate_oscillator import ultimate_oscillator as pyti_ultimate
-from pyti.aroon import aroon_up as pyti_aroon_up, aroon_down as pyti_aroon_down
-from trading_strategy import should_open_trade, should_abandon_trade, calculate_success_probability, should_enter_trade
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -130,7 +109,7 @@ on_message('not a json')
 
 # Inicializar a API IQ Option
 account_type = "PRACTICE"  # Conta Real - AGORA É PRA VALER!
-instrument_types = ["binary", "crypto", "digital"]  # Tipos de instrumentos suportados
+instrument_types = ["binary", "crypto", "digital", "otc"]  # Tipos de instrumentos suportados
 
 # Definir variáveis globais
 running = False
@@ -185,20 +164,20 @@ def fetch_sorted_assets():
     try:
         assets = iq.get_all_ACTIVES_OPCODE()
         raw_profitability = iq.get_all_profit()
-        # Correct method to fetch asset volumes
-        raw_volume = iq.get_all_ACTIVES()  # Fetch asset volumes
+        # Replace the following line with a valid method to fetch asset volumes
+        raw_volume = {}  # Placeholder for actual volume fetching logic
 
         profitability = {}
         volume = {}
-
         for asset, values in raw_profitability.items():
             if isinstance(values, dict):  # Tratamento para defaultdict
                 profitability[asset] = float(values.get('turbo', 0.0))  # 'turbo' is used for 5-minute trades
             else:
                 profitability[asset] = float(values)
 
-        for asset, details in raw_volume.items():
-            volume[asset] = float(details.get('volume', 0))
+        # Populate volume dictionary with actual volume data
+        for asset in assets.keys():
+            volume[asset] = 0  # Placeholder for actual volume data
 
         sorted_assets = sorted(
             assets.keys(),
@@ -356,7 +335,7 @@ def analyze_indicators(asset):
             "roc": lambda: ta.roc(data["close"], length=12),
             "obv": lambda: ta.obv(data["close"], data["volume"]),
             "trix": lambda: ta.trix(data["close"], length=15),
-            # "vwma": lambda: ta.vwma(data["close"], data["volume"], length=20),
+            "vwma": lambda: ta.vwma(data["close"], data["volume"], length=20),
             "mfi": lambda: ta.mfi(data["high"], data["low"], data["close"], data["volume"], length=14).astype(float),  # Cast to float
             "dpo": lambda: ta.dpo(data["close"], length=14),
             "keltner_upper": lambda: ta.kc(data["high"], data["low"], data["close"], length=20)["KCUp_20_2.1"],
@@ -366,101 +345,7 @@ def analyze_indicators(asset):
             "aroon_up": lambda: ta.aroon(data["high"], data["low"], length=25)["AROONU_25"],
             "aroon_down": lambda: ta.aroon(data["high"], data["low"], length=25)["AROOND_25"],
             "trend": lambda: analyze_trend(data),
-            "last_candles": lambda: analyze_last_candles(data),
-            # TA-Lib indicators
-            "talib_rsi": lambda: talib.RSI(data["close"], timeperiod=14),
-            "talib_macd": lambda: talib.MACD(data["close"], fastperiod=12, slowperiod=26, signalperiod=9)[0],
-            "talib_ema": lambda: talib.EMA(data["close"], timeperiod=9),
-            "talib_sma": lambda: talib.SMA(data["close"], timeperiod=20),
-            "talib_stochastic": lambda: talib.STOCH(data["high"], data["low"], data["close"])[0],
-            "talib_atr": lambda: talib.ATR(data["high"], data["low"], data["close"], timeperiod=14),
-            "talib_adx": lambda: talib.ADX(data["high"], data["low"], data["close"], timeperiod=14),
-            "talib_bollinger_high": lambda: talib.BBANDS(data["close"], timeperiod=20)[0],
-            "talib_bollinger_low": lambda: talib.BBANDS(data["close"], timeperiod=20)[2],
-            "talib_cci": lambda: talib.CCI(data["high"], data["low"], data["close"], timeperiod=20),
-            "talib_willr": lambda: talib.WILLR(data["high"], data["low"], data["close"], timeperiod=14),
-            "talib_roc": lambda: talib.ROC(data["close"], timeperiod=12),
-            "talib_obv": lambda: talib.OBV(data["close"], data["volume"]),
-            "talib_trix": lambda: talib.TRIX(data["close"], timeperiod=15),
-            "talib_vwma": lambda: talib.WMA(data["close"], timeperiod=20),
-            "talib_mfi": lambda: talib.MFI(data["high"], data["low"], data["close"], data["volume"], timeperiod=14),
-            "talib_dpo": lambda: talib.DEMA(data["close"], timeperiod=14),
-            "talib_keltner_upper": lambda: talib.KAMA(data["high"], timeperiod=20),
-            "talib_keltner_lower": lambda: talib.KAMA(data["low"], timeperiod=20),
-            "talib_ultimate_oscillator": lambda: talib.ULTOSC(data["high"], data["low"], data["close"]),
-            "talib_tsi": lambda: talib.T3(data["close"], timeperiod=14),
-            "talib_aroon_up": lambda: talib.AROONOSC(data["high"], data["low"], timeperiod=25),
-            "talib_aroon_down": lambda: talib.AROONOSC(data["low"], data["high"], timeperiod=25),
-            # Pyti indicators
-            "pyti_rsi": lambda: pyti_rsi(data["close"].tolist(), 14)[-1],
-            "pyti_macd": lambda: pyti_macd(data["close"].tolist(), 12, 26, 9)[-1],
-            "pyti_sma": lambda: pyti_sma(data["close"].tolist(), 20)[-1],
-            "pyti_ema": lambda: pyti_ema(data["close"].tolist(), 9)[-1],
-            "pyti_bollinger_high": lambda: pyti_bollinger(data["close"].tolist(), 20)[-1],
-            "pyti_bollinger_low": lambda: pyti_bollinger(data["close"].tolist(), 20)[-1],
-            "pyti_atr": lambda: pyti_atr(data["high"].tolist(), data["low"].tolist(), data["close"].tolist(), 14)[-1],
-            "pyti_stochastic": lambda: pyti_stochastic(data["high"].tolist(), data["low"].tolist(), data["close"].tolist(), 14)[-1],
-            "pyti_willr": lambda: pyti_willr(data["high"].tolist(), data["low"].tolist(), data["close"].tolist(), 14)[-1],
-            "pyti_cci": lambda: pyti_cci(data["high"].tolist(), data["low"].tolist(), data["close"].tolist(), 20)[-1],
-            "pyti_roc": lambda: pyti_roc(data["close"].tolist(), 12)[-1],
-            "pyti_obv": lambda: pyti_obv(data["close"].tolist(), data["volume"].tolist())[-1],
-            "pyti_mfi": lambda: pyti_mfi(data["high"].tolist(), data["low"].tolist(), data["close"].tolist(), data["volume"].tolist(), 14)[-1],
-            "pyti_dpo": lambda: pyti_dpo(data["close"].tolist(), 14)[-1],
-            "pyti_ultimate_oscillator": lambda: pyti_ultimate(data["high"].tolist(), data["low"].tolist(), data["close"].tolist())[-1],
-            "pyti_tsi": lambda: pyti_tsi(data["close"].tolist())[-1],
-            "pyti_aroon_up": lambda: pyti_aroon_up(data["high"].tolist(), 25)[-1],
-            "pyti_aroon_down": lambda: pyti_aroon_down(data["low"].tolist(), 25)[-1],
-            # btalib indicators
-            "btalib_rsi": lambda: btalib.rsi(data["close"]).df.iloc[-1, 0],
-            "btalib_macd": lambda: btalib.macd(data["close"]).df.iloc[-1, 0],
-            "btalib_ema": lambda: btalib.ema(data["close"]).df.iloc[-1, 0],
-            "btalib_sma": lambda: btalib.sma(data["close"]).df.iloc[-1, 0],
-            "btalib_stochastic": lambda: btalib.stochastic(data["high"], data["low"], data["close"]).df.iloc[-1, 0],
-            "btalib_atr": lambda: btalib.atr(data["high"], data["low"], data["close"]).df.iloc[-1, 0],
-            "btalib_adx": lambda: btalib.adx(data["high"], data["low"], data["close"]).df.iloc[-1, 0],
-            "btalib_bollinger_high": lambda: btalib.bbands(data["close"]).df.iloc[-1, 0],
-            "btalib_bollinger_low": lambda: btalib.bbands(data["close"]).df.iloc[-1, 2],
-            "btalib_cci": lambda: btalib.cci(data["high"], data["low"], data["close"]).df.iloc[-1, 0],
-            "btalib_willr": lambda: btalib.willr(data["high"], data["low"], data["close"]).df.iloc[-1, 0],
-            "btalib_roc": lambda: btalib.roc(data["close"]).df.iloc[-1, 0],
-            "btalib_obv": lambda: btalib.obv(data["close"], data["volume"]).df.iloc[-1, 0],
-            "btalib_trix": lambda: btalib.trix(data["close"]).df.iloc[-1, 0],
-            "btalib_vwma": lambda: btalib.vwma(data["close"], data["volume"]).df.iloc[-1, 0],
-            "btalib_mfi": lambda: btalib.mfi(data["high"], data["low"], data["close"], data["volume"]).df.iloc[-1, 0],
-            "btalib_dpo": lambda: btalib.dpo(data["close"]).df.iloc[-1, 0],
-            "btalib_keltner_upper": lambda: btalib.kc(data["high"], data["low"], data["close"]).df.iloc[-1, 0],
-            "btalib_keltner_lower": lambda: btalib.kc(data["high"], data["low"], data["close"]).df.iloc[-1, 2],
-            "btalib_ultimate_oscillator": lambda: btalib.uo(data["high"], data["low"], data["close"]).df.iloc[-1, 0],
-            "btalib_tsi": lambda: btalib.tsi(data["close"]).df.iloc[-1, 0],
-            "btalib_aroon_up": lambda: btalib.aroon(data["high"], data["low"]).df.iloc[-1, 0],
-            "btalib_aroon_down": lambda: btalib.aroon(data["high"], data["low"]).df.iloc[-1, 1],
-            # Finta indicators
-            "finta_rsi": lambda: finta.TA.RSI(data).iloc[-1],
-            "finta_macd": lambda: finta.TA.MACD(data).iloc[-1],
-            "finta_ema": lambda: finta.TA.EMA(data, 9).iloc[-1],
-            "finta_sma": lambda: finta.TA.SMA(data, 20).iloc[-1],
-            "finta_stochastic": lambda: finta.TA.STOCH(data).iloc[-1],
-            "finta_atr": lambda: finta.TA.ATR(data).iloc[-1],
-            "finta_adx": lambda: finta.TA.ADX(data).iloc[-1],
-            "finta_bollinger_high": lambda: finta.TA.BBANDS(data)["BB_UPPER"].iloc[-1],
-            "finta_bollinger_low": lambda: finta.TA.BBANDS(data)["BB_LOWER"].iloc[-1],
-            "finta_cci": lambda: finta.TA.CCI(data).iloc[-1],
-            "finta_willr": lambda: finta.TA.WILLIAMS(data).iloc[-1],
-            "finta_roc": lambda: finta.TA.ROC(data).iloc[-1],
-            "finta_obv": lambda: finta.TA.OBV(data).iloc[-1],
-            "finta_trix": lambda: finta.TA.TRIX(data).iloc[-1],
-            "finta_vwma": lambda: finta.TA.VWMA(data).iloc[-1],
-            "finta_mfi": lambda: finta.TA.MFI(data).iloc[-1],
-            "finta_dpo": lambda: finta.TA.DPO(data).iloc[-1],
-            "finta_keltner_upper": lambda: finta.TA.KC(data)["KC_UPPER"].iloc[-1],
-            "finta_keltner_lower": lambda: finta.TA.KC(data)["KC_LOWER"].iloc[-1],
-            "finta_ultimate_oscillator": lambda: finta.TA.UO(data).iloc[-1],
-            "finta_tsi": lambda: finta.TA.TSI(data).iloc[-1],
-            "finta_aroon_up": lambda: finta.TA.AROON(data)["AROON_UP"].iloc[-1],
-            "finta_aroon_down": lambda: finta.TA.AROON(data)["AROON_DOWN"].iloc[-1],
-            # Statsmodels indicators
-            "statsmodels_ols": lambda: sm.OLS(data["close"], sm.add_constant(data["close"].index)).fit().params[1],
-            "statsmodels_arima": lambda: sm.tsa.ARIMA
+            "last_candles": lambda: analyze_last_candles(data)
         }
 
         for key, func in available_indicators.items():
@@ -471,8 +356,8 @@ def analyze_indicators(asset):
                     if result is not None and not result.empty:
                         indicators[key] = result.iloc[-1] if isinstance(result, pd.Series) else result
             except FutureWarning as fw:
-                log_message(f"FutureWarning ao calcular {key.upper()} para {asset}: {fw}. Pulando indicador.")
-                indicators[key] = None
+                log_message(f"FutureWarning ao calcular {key.upper()} para {asset}: {fw}. Pulando ativo.")
+                return None
             except Exception as e:
                 log_message(f"Erro ao calcular {key.upper()} para {asset}: {e}")
                 indicators[key] = None
@@ -492,57 +377,57 @@ def analyze_indicators(asset):
                 decisions.append("sell")
 
         if indicators.get("ema") is not None:
-            if data["close"].iloc[-1] > indicators["ema"] or data["close"].iloc[-1] > indicators["talib_ema"]:
+            if data["close"].iloc[-1] > indicators["ema"]:
                 decisions.append("buy")
             else:
                 decisions.append("sell")
 
         if indicators.get("sma") is not None:
-            if data["close"].iloc[-1] > indicators["sma"] or data["close"].iloc[-1] > indicators["talib_sma"]:
+            if data["close"].iloc[-1] > indicators["sma"]:
                 decisions.append("buy")
             else:
                 decisions.append("sell")
 
         if indicators.get("stochastic") is not None:
-            if indicators["stochastic"] < 20 or indicators["talib_stochastic"] < 20:
+            if indicators["stochastic"] < 20:
                 decisions.append("buy")
-            elif indicators["stochastic"] > 80 or indicators["talib_stochastic"] > 80:
+            elif indicators["stochastic"] > 80:
                 decisions.append("sell")
 
         if indicators.get("bollinger_low") is not None and indicators.get("bollinger_high") is not None:
-            if data["close"].iloc[-1] < indicators["bollinger_low"] or data["close"].iloc[-1] < indicators["talib_bollinger_low"]:
+            if data["close"].iloc[-1] < indicators["bollinger_low"]:
                 decisions.append("buy")
-            elif data["close"].iloc[-1] > indicators["bollinger_high"] or data["close"].iloc[-1] > indicators["talib_bollinger_high"]:
+            elif data["close"].iloc[-1] > indicators["bollinger_high"]:
                 decisions.append("sell")
 
         if indicators.get("cci") is not None:
-            if indicators["cci"] < -100 or indicators["talib_cci"] < -100:
+            if indicators["cci"] < -100:
                 decisions.append("buy")
-            elif indicators["cci"] > 100 or indicators["talib_cci"] > 100:
+            elif indicators["cci"] > 100:
                 decisions.append("sell")
 
         if indicators.get("willr") is not None:
-            if indicators["willr"] < -80 or indicators["talib_willr"] < -80:
+            if indicators["willr"] < -80:
                 decisions.append("buy")
-            elif indicators["willr"] > -20 or indicators["talib_willr"] > -20:
+            elif indicators["willr"] > -20:
                 decisions.append("sell")
 
         if indicators.get("roc") is not None:
-            if indicators["roc"] > 0 or indicators["talib_roc"] > 0:
+            if indicators["roc"] > 0:
                 decisions.append("buy")
             else:
                 decisions.append("sell")
 
         if indicators.get("mfi") is not None:
-            if indicators["mfi"] < 20 or indicators["talib_mfi"] < 20:
+            if indicators["mfi"] < 20:
                 decisions.append("buy")
-            elif indicators["mfi"] > 80 or indicators["talib_mfi"] > 80:
+            elif indicators["mfi"] > 80:
                 decisions.append("sell")
 
         if indicators.get("aroon_up") is not None and indicators.get("aroon_down") is not None:
-            if indicators["aroon_up"] > 70 or indicators["talib_aroon_up"] > 70:
+            if indicators["aroon_up"] > 70:
                 decisions.append("buy")
-            if indicators["aroon_down"] > 70 or indicators["talib_aroon_down"] > 70:
+            if indicators["aroon_down"] > 70:
                 decisions.append("sell")
 
         if indicators.get("trend") is not None:
@@ -583,11 +468,6 @@ def countdown(seconds):
         log_message(f"Aguardando {seconds} segundos...")
         time.sleep(1)
         seconds -= 1
-
-# Parâmetro de diferença mínima, perda máxima e probabilidade mínima
-MIN_DIFFERENCE = 0.0005
-MAX_LOSS = 0.0010
-MIN_PROBABILITY = 0.6
 
 # Adapted execute_trades function
 def execute_trades():
@@ -640,25 +520,16 @@ def execute_trades():
                 log_message(f"Pulando negociação para {asset}. Sem consenso.")
                 continue
 
-            # Calculate success probability
-            trade_data = []  # Replace with actual historical trade data
-            probability = calculate_success_probability(trade_data, asset, action)
-            if not should_enter_trade(probability, MIN_PROBABILITY):
-                log_message(f"Probabilidade de sucesso insuficiente para {asset}. Pulando ativo.")
-                continue
-
-            # Fetch historical data for price comparison
-            data = fetch_historical_data(asset, 1, 2)  # Fetch last 2 candles of 1 minute each
-            opening_price = data["open"].iloc[-1]
-            closing_price = data["close"].iloc[-2]
-
-            if not should_open_trade(opening_price, closing_price, MIN_DIFFERENCE):
-                log_message(f"Diferença de preço insuficiente para {asset}. Pulando ativo.")
-                continue
-
             log_message(f"Tentando realizar negociação: Ativo={asset}, Ação={action}, Valor = R${current_amount}")
             saldo_entrada = iq.get_balance()  # Store balance before trade
             print(f"Balance before opening trade: {saldo_entrada}")  # Display balance before trade
+
+            # Verificar a disponibilidade do ativo antes de tentar negociar
+            available_assets = iq.get_all_ACTIVES_OPCODE()
+            if asset not in available_assets:
+                log_message(f"Ativo {asset} não encontrado na plataforma. Pulando ativo.")
+                continue
+
             try:
                 success, trade_id = iq.buy(current_amount, asset, action, 5)  # Negociações de 5 minutos
                 if success:
@@ -731,8 +602,12 @@ def monitor_trade(trade_id, asset):
 
         if result <= 0:
             consecutive_losses += 1
-            if consecutive_losses >= 3:
-                log_message("Inverting trade direction due to consecutive losses.")
+            if consecutive_losses < 3:  # Change to 3 instead of 4
+                current_amount *= 2  # Double the amount for the next trade
+                amount_doubled = True  # Set the flag to indicate the amount has been doubled
+                log_message(f"Dobrar valor da negociação. Próximo valor de negociação: R${current_amount}")
+            else:
+                log_message("Martingale limit reached. Reversing trade direction.")
                 decision = analyze_indicators(asset)
                 if decision == "buy":
                     action = "put"  # Reverse the decision
@@ -741,9 +616,10 @@ def monitor_trade(trade_id, asset):
                 else:
                     log_message(f"Pulando negociação para {asset}. Sem consenso.")
                     return
-            current_amount *= 2  # Double the amount for the next trade
-            amount_doubled = True  # Set the flag to indicate the amount has been doubled
-            log_message(f"Dobrar valor da negociação. Próximo valor de negociação: R${current_amount}")
+                current_amount *= 2  # Continue doubling the amount
+                log_message(f"Reversed trade direction. Próximo valor de negociação: R${current_amount}, Ação={action}")
+                consecutive_losses = 0
+                amount_doubled = False  # Reset the flag
         else:
             consecutive_losses = 0
             set_amount()  # Reset to 2% of the balance after a win
@@ -787,8 +663,12 @@ def check_trade_results():
 
                 if result <= 0:
                     consecutive_losses += 1
-                    if consecutive_losses >= 3:
-                        log_message("Inverting trade direction due to consecutive losses.")
+                    if consecutive_losses < 3:  # Change to 3 instead of 4
+                        current_amount *= 2  # Double the amount for the next trade
+                        amount_doubled = True  # Set the flag to indicate the amount has been doubled
+                        log_message(f"Dobrar valor da negociação. Próximo valor de negociação: R${current_amount}")
+                    else:
+                        log_message("Martingale limit reached. Reversing trade direction.")
                         decision = analyze_indicators(asset)
                         if decision == "buy":
                             action = "put"  # Reverse the decision
@@ -797,9 +677,10 @@ def check_trade_results():
                         else:
                             log_message(f"Pulando negociação para {asset}. Sem consenso.")
                             return
-                    current_amount *= 2  # Double the amount for the next trade
-                    amount_doubled = True  # Set the flag to indicate the amount has been doubled
-                    log_message(f"Dobrar valor da negociação. Próximo valor de negociação: R${current_amount}")
+                        current_amount *= 2  # Continue doubling the amount
+                        log_message(f"Reversed trade direction. Próximo valor de negociação: R${current_amount}, Ação={action}")
+                        consecutive_losses = 0
+                        amount_doubled = False  # Reset the flag
                 else:
                     consecutive_losses = 0
                     set_amount()  # Reset to 2% of the balance after a win
@@ -831,7 +712,8 @@ def stop_trading():
     global smart_stop
     smart_stop = True
     running = False
-    icon_label.config(image=static_icon)
+    if 'static_icon' in globals():
+        icon_label.config(image=static_icon)
     log_message("Smart Stop ativado. Parando execução após reset para valor inicial.")
 
 def update_log():
@@ -876,32 +758,33 @@ threading.Thread(target=watchdog, daemon=True).start()
 # GUI Configuration
 root = tk.Tk()
 root.title("Capybara Trader v5.9")
-root.configure(bg="#594100")
+root.configure(bg="#001209")
 
+static_icon = PhotoImage(file="static_icon.png")
 rotating_icon = PhotoImage(file="working_capy.png")
-icon_label = tk.Label(root, image=rotating_icon, bg="#594100")
+icon_label = tk.Label(root, image=static_icon, bg="#001209")
 icon_label.grid(row=0, column=0, rowspan=2, padx=10, pady=10)
 
 stop_button = tk.Button(root, text="Smart Stop", command=stop_trading, bg="#F44336", fg="white", font=("Helvetica", 12))
 stop_button.grid(row=0, column=1, padx=5, pady=5)
 
-balance_label = tk.Label(root, text="Balance: R$0.00", bg="#594100", fg="white", font=("Helvetica", 12))
+balance_label = tk.Label(root, text="Balance: R$0.00", bg="#001209", fg="white", font=("Helvetica", 12))
 balance_label.grid(row=1, column=1, columnspan=2, padx=5, pady=5)
 
-log_text = ScrolledText(root, height=10, font=("Courier", 10), bg="#594100", fg="white")
+log_text = ScrolledText(root, height=10, font=("Courier", 10), bg="#001209", fg="white")
 log_text.grid(row=3, column=0, columnspan=5, padx=10, pady=10)
 
 # Redirect stdout and stderr to the log_text widget
 sys.stdout = TextRedirector(log_text, "stdout")
 sys.stderr = TextRedirector(log_text, "stderr")
 
-profit_label = tk.Label(root, text="Lucro: R$0.00", font=("Helvetica", 16), bg="#594100", fg="white")
+profit_label = tk.Label(root, text="Lucro: R$0.00", font=("Helvetica", 16), bg="#001209", fg="white")
 profit_label.grid(row=4, column=0, columnspan=5, padx=10, pady=10)
 
 footer_label = tk.Label(
     root,
      text="@oedlopes - 2025  - Deus Seja Louvado - Sola Scriptura - Sola Fide - Solus Christus - Sola Gratia - Soli Deo Gloria",
-    bg="#594100",
+    bg="#001209",
     fg="#A9A9A9",
     font=("Helvetica", 7)
 )
@@ -932,125 +815,5 @@ set_amount()
 balance_label.config(text=f"Balance: R${iq.get_balance():.2f}")
 
 # ...existing code...
-
-# Função para simular uma negociação
-def simulate_trade(success):
-    global current_amount, consecutive_losses, amount_doubled
-
-    if success:
-        log_message(f"Trade successful. Amount: ${current_amount}")
-        consecutive_losses = 0
-        current_amount = initial_amount
-        amount_doubled = False
-    else:
-        log_message(f"Trade failed. Amount: ${current_amount}")
-        consecutive_losses += 1
-        if consecutive_losses <= martingale_limit:
-            current_amount *= 2
-            amount_doubled = True
-        else:
-            log_message("Martingale limit reached. Resetting to initial amount.")
-            consecutive_losses = 0
-            current_amount = initial_amount
-            amount_doubled = False
-
-# Teste da lógica de Martingale
-def test_martingale_logic():
-    global current_amount, consecutive_losses, amount_doubled
-
-    # Resetar variáveis
-    current_amount = initial_amount
-    consecutive_losses = 0
-    amount_doubled = False
-
-    # Simular uma série de negociações
-    simulate_trade(False)  # Falha
-    assert current_amount == initial_amount * 2, f"Expected {initial_amount * 2}, got {current_amount}"
-    assert amount_doubled == True, "Expected amount_doubled to be True"
-
-    simulate_trade(False)  # Falha
-    assert current_amount == initial_amount * 4, f"Expected {initial_amount * 4}, got {current_amount}"
-    assert amount_doubled == True, "Expected amount_doubled to be True"
-
-    simulate_trade(True)  # Sucesso
-    assert current_amount == initial_amount, f"Expected {initial_amount}, got {current_amount}"
-    assert amount_doubled == False, "Expected amount_doubled to be False"
-
-    simulate_trade(False)  # Falha
-    assert current_amount == initial_amount * 2, f"Expected {initial_amount * 2}, got {current_amount}"
-    assert amount_doubled == True, "Expected amount_doubled to be True"
-
-    simulate_trade(False)  # Falha
-    assert current_amount == initial_amount * 4, f"Expected {initial_amount * 4}, got {current_amount}"
-    assert amount_doubled == True, "Expected amount_doubled to be True"
-
-    simulate_trade(False)  # Falha
-    assert current_amount == initial_amount * 8, f"Expected {initial_amount * 8}, got {current_amount}"
-    assert amount_doubled == True, "Expected amount_doubled to be True"
-
-    simulate_trade(False)  # Falha
-    assert current_amount == initial_amount * 16, f"Expected {initial_amount * 16}, got {current_amount}"
-    assert amount_doubled == True, "Expected amount_doubled to be True"
-
-    simulate_trade(False)  # Falha
-    assert current_amount == initial_amount, f"Expected {initial_amount}, got {current_amount}"
-    assert amount_doubled == False, "Expected amount_doubled to be False"
-
-    log_message("Martingale logic test completed successfully.")
-
-# Executar o teste
-test_martingale_logic()
-
-# Configuração da GUI
-root = tk.Tk()
-root.title("Capybara v6.2")
-root.configure(bg="#594100")
-
-static_icon = PhotoImage(file="static_icon.png")
-rotating_icon = PhotoImage(file="working_capy.png")
-icon_label = tk.Label(root, image=static_icon, bg="#594100")
-icon_label.grid(row=0, column=0, rowspan=2, padx=10, pady=10)
-
-start_button = tk.Button(root, text="Start", command=start_trading, bg="#4CAF50", fg="white", font=("Helvetica", 12))
-start_button.grid(row=0, column=1, padx=5, pady=5)
-
-stop_button = tk.Button(root, text="Stop", command=stop_trading, bg="#F44336", fg="white", font=("Helvetica", 12))
-stop_button.grid(row=0, column=2, padx=5, pady=5)
-
-amount_label = tk.Label(root, text="Initial Amount:", bg="#594100", fg="white", font=("Helvetica", 12))
-amount_label.grid(row=1, column=1, padx=5, pady=5)
-
-amount_entry = tk.Entry(root, font=("Helvetica", 12))
-amount_entry.insert(0, "2")
-amount_entry.grid(row=1, column=2, padx=5, pady=5)
-
-set_button = tk.Button(root, text="Set Amount", command=lambda: set_amount(float(amount_entry.get())), bg="#FFC107", fg="black", font=("Helvetica", 12))
-set_button.grid(row=1, column=3, padx=5, pady=5)
-
-log_text = ScrolledText(root, height=10, font=("Courier", 10), bg="#594100", fg="white")
-log_text.grid(row=2, column=0, columnspan=5, padx=10, pady=10)
-
-profit_label = tk.Label(root, text="Lucro: R$0.00", font=("Helvetica", 16), bg="#594100", fg="white")
-profit_label.grid(row=3, column=0, columnspan=5, padx=10, pady=10)
-
-# Rodapé
-footer_label = tk.Label(
-    root,
-    text="@oedlopes - 2025  - Deus seja louvado",
-    bg="#594100",
-    fg="#A9A9A9",
-    font=("Helvetica", 8)
-)
-footer_label.grid(row=4, column=0, columnspan=4, padx=10, pady=5, sticky="nsew")
-
-update_log()
-
-invalid_credentials = False
-
-if invalid_credentials:
-    log_text.insert(tk.END, "Invalid credentials. Please check the credentials.txt file.\n")
-
-root.mainloop()
-
 
 
