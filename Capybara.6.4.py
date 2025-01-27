@@ -518,7 +518,7 @@ def analyze_indicators(asset):
             log_message("Nenhum voto válido. Pulando ativo.")
             return None
 
-        majority = (total_votes // 2) + 1
+        majority = (total_votes // 2) + 2
 
         if buy_votes >= majority:
             return "buy"
@@ -625,7 +625,7 @@ def execute_trades():
         check_trade_results()
         update_session_profit()
 
-        if smart_stop and current_amount == initial_amount:
+        if smart_stop and current_amount == initial_amount and consecutive_losses == 0:
             running = False
             log_message("Smart Stop ativado. Parando execução após reset para valor inicial.")
             break
@@ -707,19 +707,18 @@ def monitor_trade(trade_id, asset):
                 log_message(f"Dobrar valor da negociação. Próximo valor de negociação: R${current_amount}")
         else:
             consecutive_losses = 0
-            set_amount()  # Reset to 2% of the balance after a win
+            set_amount()  # Reset to 10% of the balance after a win
             amount_doubled = False  # Reset the flag
             log_message(f"Negociação bem-sucedida. Valor de negociação resetado para: R${current_amount}")
 
             # Check if Smart Stop should be activated
-            if smart_stop:
+            if smart_stop and current_amount == initial_amount:
                 running = False
                 log_message("Smart Stop ativado. Parando execução após reset para valor inicial.")
     finally:
         simultaneous_trades -= 1
         if trade_id in trade_list:
             trade_list.remove(trade_id)  # Ensure the trade is removed from the list after checking
-        print(f"Balance after closing trade: {iq.get_balance()}")  # Display balance after closing trade
 
 def check_trade_results():
     global trade_list
@@ -773,7 +772,7 @@ def check_trade_results():
                         log_message(f"Dobrar valor da negociação. Próximo valor de negociação: R${current_amount}")
                 else:
                     consecutive_losses = 0
-                    set_amount()  # Reset to 2% of the balance after a win
+                    set_amount()  # Reset to 10% of the balance after a win
                     amount_doubled = False  # Reset the flag
                     log_message(f"Negociação bem-sucedida. Valor de negociação resetado para: R${current_amount}")
 
@@ -819,14 +818,14 @@ def update_log():
     if running:
         root.after(1000, update_log)
 
-# Update the set_amount function to use 2% of the account balance
+# Update the set_amount function to use 10% of the account balance
 def set_amount():
     global initial_amount
     global current_amount
     balance = iq.get_balance()
-    initial_amount = max(balance * 0.02, MIN_TRADE_AMOUNT)  # Set to 2% of the balance or minimum trade amount
+    initial_amount = max(balance * 0.1, MIN_TRADE_AMOUNT)  # Set to 10% of the balance or minimum trade amount
     current_amount = initial_amount
-    log_message(f"Initial amount set to 2% of balance or minimum trade amount: R${initial_amount:.2f}")
+    log_message(f"Initial amount set to 10% of balance or minimum trade amount: R${initial_amount:.2f}")
     root.after(0, lambda: balance_label.config(text=f"Balance: R${balance:.2f}"))
 
 # Function to stop and start trading if the code freezes for more than 15 seconds
@@ -1161,6 +1160,10 @@ if invalid_credentials:
     log_text.insert(tk.END, "Invalid credentials. Please check the credentials.txt file.\n")
 
 root.mainloop()
+
+
+
+
 
 
 
