@@ -973,6 +973,8 @@ def check_smart_stop_time():
     global running
     while running:
         current_time = time.localtime()
+        log_message(f"Current time: {current_time.tm_hour:02d}:{current_time.tm_min:02d}")
+        log_message(f"Smart Stop time: {smart_stop_hour:02d}:{smart_stop_minute:02d}")
         if (smart_stop_hour is not None and smart_stop_minute is not None and
                 current_time.tm_hour == smart_stop_hour and current_time.tm_min == smart_stop_minute):
             log_message("Smart Stop time reached. Stopping trading session...")
@@ -1106,7 +1108,7 @@ test_martingale_logic()
 
 # Configuração da GUI
 root = tk.Tk()
-root.title("Capybara v6.3")
+root.title("Capybara v6.4")
 root.configure(bg="#0b1429")
 
 static_icon = PhotoImage(file="static_icon.png")
@@ -1154,6 +1156,7 @@ if invalid_credentials:
     log_text.insert(tk.END, "Invalid credentials. Please check the credentials.txt file.\n")
 
 root.mainloop()
+
 
 
 
