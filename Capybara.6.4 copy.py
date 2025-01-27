@@ -127,7 +127,7 @@ on_message('')
 on_message('not a json')
 
 # Inicializar a API IQ Option
-account_type = "PRACTICE"  # Conta Real - AGORA É PRA VALER!
+account_type = "REAL"  # Conta Real - AGORA É PRA VALER!
 instrument_types = ["binary", "crypto", "digital", "otc"]  # Tipos de instrumentos suportados
 
 # Definir variáveis globais
@@ -158,7 +158,7 @@ smart_stop_minute = None
 
 # Variáveis para o trailing stop
 trailing_stop_active = False
-trailing_stop_threshold = 0.3  # Percentual de proteção do lucro
+trailing_stop_threshold = 0.01  # Percentual de proteção do lucro
 
 def print_account_balance():
     balance = iq.get_balance()
@@ -638,7 +638,6 @@ def monitor_trade(trade_id, asset):
     global previous_amount
     global saldo_saida
     global amount_doubled
-    global smart_stop  # Add this line to access the smart_stop flag
 
     try:
         print(f"Monitorando negociação {trade_id} para o ativo {asset}...")
@@ -711,10 +710,6 @@ def monitor_trade(trade_id, asset):
             amount_doubled = False  # Reset the flag
             log_message(f"Negociação bem-sucedida. Valor de negociação resetado para: R${current_amount}")
 
-            # Check if Smart Stop should be activated
-            if smart_stop:
-                running = False
-                log_message("Smart Stop ativado. Parando execução após reset para valor inicial.")
     finally:
         simultaneous_trades -= 1
         if trade_id in trade_list:
@@ -1161,7 +1156,6 @@ if invalid_credentials:
     log_text.insert(tk.END, "Invalid credentials. Please check the credentials.txt file.\n")
 
 root.mainloop()
-
 
 
 
