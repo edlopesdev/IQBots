@@ -151,14 +151,6 @@ auto_initial_amount = 2
 smart_stop = False
 MIN_TRADE_AMOUNT = 2  # Define the minimum trade amount
 
-# Variáveis para o horário de Smart Stop
-smart_stop_hour = None
-smart_stop_minute = None
-
-# Variáveis para o trailing stop
-trailing_stop_active = False
-trailing_stop_threshold = 0.01  # Percentual de proteção do lucro
-
 def print_account_balance():
     balance = iq.get_balance()
     account_type_str = "REAL" if account_type == "REAL" else "DEMO"
@@ -676,9 +668,6 @@ def monitor_trade(trade_id, asset):
 
         update_session_profit()
 
-        if result > 0 and trailing_stop_active:
-            threading.Thread(target=check_trailing_stop, args=(trade_id, result)).start()
-
         if result <= 0:
             consecutive_losses += 1
             current_price = iq.get_candles(asset, 60, 1, time.time())[0]['close']  # Fetch current price
@@ -785,7 +774,6 @@ def start_trading():
         icon_label.config(image=rotating_icon)
         log_message("Starting trading session...")
         threading.Thread(target=execute_trades).start()
-        threading.Thread(target=check_smart_stop_time).start()
 
 # Função para parar a execução de trades
 def stop_trading():
@@ -852,38 +840,15 @@ stop_button.grid(row=0, column=1, padx=5, pady=5)
 balance_label = tk.Label(root, text="Balance: R$0.00", bg="#0b1429", fg="white", font=("Helvetica", 12))
 balance_label.grid(row=1, column=1, columnspan=2, padx=5, pady=5)
 
-# Campos para definir o horário de Smart Stop
-hour_label = tk.Label(root, text="Hour:", bg="#0b1429", fg="white", font=("Helvetica", 12))
-hour_label.grid(row=2, column=0, padx=5, pady=5)
-hour_entry = tk.Entry(root, font=("Helvetica", 12))
-hour_entry.grid(row=2, column=1, padx=5, pady=5)
-
-minute_label = tk.Label(root, text="Minute:", bg="#0b1429", fg="white", font=("Helvetica", 12))
-minute_label.grid(row=2, column=2, padx=5, pady=5)
-minute_entry = tk.Entry(root, font=("Helvetica", 12))
-minute_entry.grid(row=2, column=3, padx=5, pady=5)
-
-set_time_button = tk.Button(root, text="Set Smart Stop Time", command=set_smart_stop_time, bg="#FFC107", fg="black", font=("Helvetica", 12))
-set_time_button.grid(row=2, column=4, padx=5, pady=5)
-
-# Campos para definir o Trailing Stop
-trailing_stop_label = tk.Label(root, text="Trailing Stop (%):", bg="#0b1429", fg="white", font=("Helvetica", 12))
-trailing_stop_label.grid(row=3, column=0, padx=5, pady=5)
-trailing_stop_entry = tk.Entry(root, font=("Helvetica", 12))
-trailing_stop_entry.grid(row=3, column=1, padx=5, pady=5)
-
-set_trailing_stop_button = tk.Button(root, text="Set Trailing Stop", command=set_trailing_stop, bg="#FFC107", fg="black", font=("Helvetica", 12))
-set_trailing_stop_button.grid(row=3, column=2, padx=5, pady=5)
-
 log_text = ScrolledText(root, height=10, font=("Courier", 10), bg="#0b1429", fg="white")
-log_text.grid(row=4, column=0, columnspan=5, padx=10, pady=10)
+log_text.grid(row=3, column=0, columnspan=5, padx=10, pady=10)
 
 # Redirect stdout and stderr to the log_text widget
 sys.stdout = TextRedirector(log_text, "stdout")
 sys.stderr = TextRedirector(log_text, "stderr")
 
 profit_label = tk.Label(root, text="Lucro: R$0.00", font=("Helvetica", 16), bg="#0b1429", fg="white")
-profit_label.grid(row=5, column=0, columnspan=5, padx=10, pady=10)
+profit_label.grid(row=4, column=0, columnspan=5, padx=10, pady=10)
 
 footer_label = tk.Label(
     root,
@@ -892,7 +857,7 @@ footer_label = tk.Label(
     fg="#A9A9A9",
     font=("Helvetica", 7)
 )
-footer_label.grid(row=6, column=0, columnspan=4, padx=10, pady=5, sticky="nsew")
+footer_label.grid(row=5, column=0, columnspan=4, padx=10, pady=5, sticky="nsew")
 #À∴G∴D∴G∴A∴D∴U∴
 update_log()
 update_session_profit()
@@ -1082,54 +1047,6 @@ def should_open_trade(opening_price, closing_price, min_difference):
         log_message(f"Preço de abertura: {opening_price}, Preço de fechamento: {closing_price}, Diferença: {price_difference}")
         return False
     return True
-
-def set_smart_stop_time():
-    global smart_stop_hour, smart_stop_minute
-    try:
-        smart_stop_hour = int(hour_entry.get())
-        smart_stop_minute = int(minute_entry.get())
-        log_message(f"Smart Stop time set to {smart_stop_hour:02d}:{smart_stop_minute:02d}")
-    except ValueError:
-        log_message("Invalid time format for Smart Stop. Please enter valid hour and minute.")
-
-def check_smart_stop_time():
-    global running
-    while running:
-        current_time = time.localtime()
-        if (smart_stop_hour is not None and smart_stop_minute is not None and
-                current_time.tm_hour == smart_stop_hour and current_time.tm_min == smart_stop_minute):
-            log_message("Smart Stop time reached. Stopping trading session...")
-            stop_trading()
-            break
-        time.sleep(30)
-
-def set_trailing_stop():
-    global trailing_stop_active, trailing_stop_threshold
-    try:
-        trailing_stop_threshold = float(trailing_stop_entry.get()) / 100
-        trailing_stop_active = True
-        log_message(f"Trailing Stop ativado com threshold de {trailing_stop_threshold * 100:.2f}%")
-    except ValueError:
-        log_message("Formato inválido para o Trailing Stop. Por favor, insira um valor percentual válido.")
-
-def check_trailing_stop(trade_id, initial_profit):
-    global running
-    while running:
-        current_profit = iq.check_win_v4(trade_id)
-        if current_profit is not None:
-            if isinstance(current_profit, tuple):
-                current_profit = current_profit[0]
-            if isinstance(current_profit, str):
-                try:
-                    current_profit = float(current_profit)
-                except ValueError:
-                    current_profit = 0.0
-
-            if current_profit < initial_profit * (1 - trailing_stop_threshold):
-                log_message(f"Trailing Stop acionado. Lucro atual: R${current_profit:.2f}, Lucro inicial: R${initial_profit:.2f}")
-                stop_trading()
-                break
-        time.sleep(5)
 
 
 
