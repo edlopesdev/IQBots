@@ -22,6 +22,16 @@ def should_abandon_trade(opening_price, current_price, max_loss):
     """
     return abs(opening_price - current_price) > max_loss
 
+def is_high_volatility(opening_price, closing_price, threshold=0.001):
+    """
+    Detects high volatility based on the difference between opening and closing prices.
+    :param opening_price: The opening price of the asset.
+    :param closing_price: The closing price of the asset.
+    :param threshold: The threshold to consider as high volatility.
+    :return: True if the volatility is high, False otherwise.
+    """
+    return abs(closing_price - opening_price) / opening_price > threshold
+
 def calculate_success_probability(asset, direction):
     """
     Calculate the probability of success based on technical indicators.

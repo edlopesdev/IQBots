@@ -8,5 +8,5 @@ IF ERRORLEVEL 1 (
 )
 
 REM Executa o script Python
-python Capybara.6.2.py
+python Capybara.6.9.py
 pause
