@@ -189,7 +189,6 @@ def fetch_sorted_assets():
     try:
         assets = iq.get_all_ACTIVES_OPCODE()
         raw_profitability = iq.get_all_profit()
-        # Replace the following line with a valid method to fetch asset volumes
         raw_volume = {}  # Placeholder for actual volume fetching logic
 
         profitability = {}
@@ -284,7 +283,7 @@ def ignore_assets(asset):
 
 def analyze_trend(data):
     """
-    Analyzes the trend of the last 15 candles.
+    Analyzes the trend of the last 15 minutes.
     Returns 'up', 'down', or 'neutral' based on the analysis.
     """
     if len(data) < 15:
@@ -486,7 +485,7 @@ def analyze_indicators(asset):
             log_message("Nenhum voto válido. Pulando ativo.")
             return None
 
-        majority = (total_votes // 2) + 2  # Update majority to 50%+2
+        majority = (total_votes // 2) + 1  # Update majority to 50%+1
 
         if consecutive_losses >= 1:  # Invert votes starting from the second Martingale
             buy_votes, sell_votes = sell_votes, buy_votes
@@ -649,12 +648,13 @@ def monitor_trade(trade_id, asset):
 
         if result <= 0:
             consecutive_losses += 1
-            current_amount = current_amount * 2  # Correctly double the amount for the next trade
-            amount_doubled = True  # Set the flag to indicate the amount has been doubled
-            log_message(f"Dobrar valor da negociação. Próximo valor de negociação: R${current_amount}")
+            if not amount_doubled:  # Ensure the amount is only doubled once per loss
+                current_amount = current_amount * 2  # Correctly double the amount
+                amount_doubled = True  # Set the flag to indicate the amount has been doubled
+                log_message(f"Dobrar valor da negociação. Próximo valor de negociação: R${current_amount}")
         else:
             consecutive_losses = 0
-            set_amount()  # Reset to 5% of the balance after a win
+            set_amount()  # Reset to 10% of the balance after a win
             amount_doubled = False  # Reset the flag
             log_message(f"Negociação bem-sucedida. Valor de negociação resetado para: R${current_amount}")
 
@@ -695,12 +695,13 @@ def check_trade_results():
 
                 if result <= 0:
                     consecutive_losses += 1
-                    current_amount = current_amount * 2  # Correctly double the amount for the next trade
-                    amount_doubled = True  # Set the flag to indicate the amount has been doubled
-                    log_message(f"Dobrar valor da negociação. Próximo valor de negociação: R${current_amount}")
+                    if not amount_doubled:  # Ensure the amount is only doubled once per loss
+                        current_amount = current_amount * 2  # Correctly double the amount
+                        amount_doubled = True  # Set the flag to indicate the amount has been doubled
+                        log_message(f"Dobrar valor da negociação. Próximo valor de negociação: R${current_amount}")
                 else:
                     consecutive_losses = 0
-                    set_amount()  # Reset to 5% of the balance after a win
+                    set_amount()  # Reset to 10% of the balance after a win
                     amount_doubled = False  # Reset the flag
                     log_message(f"Negociação bem-sucedida. Valor de negociação resetado para: R${current_amount}")
 
@@ -745,12 +746,13 @@ def check_trade_results():
 
                 if result <= 0:
                     consecutive_losses += 1
-                    current_amount = current_amount * 2  # Correctly double the amount for the next trade
-                    amount_doubled = True  # Set the flag to indicate the amount has been doubled
-                    log_message(f"Dobrar valor da negociação. Próximo valor de negociação: R${current_amount}")
+                    if not amount_doubled:  # Ensure the amount is only doubled once per loss
+                        current_amount = current_amount * 2  # Correctly double the amount
+                        amount_doubled = True  # Set the flag to indicate the amount has been doubled
+                        log_message(f"Dobrar valor da negociação. Próximo valor de negociação: R${current_amount}")
                 else:
                     consecutive_losses = 0
-                    set_amount()  # Reset to 5% of the balance after a win
+                    set_amount()  # Reset to 10% of the balance after a win
                     amount_doubled = False  # Reset the flag
                     log_message(f"Negociação bem-sucedida. Valor de negociação resetado para: R${current_amount}")
 
@@ -795,12 +797,13 @@ def check_trade_results():
 
                 if result <= 0:
                     consecutive_losses += 1
-                    current_amount = current_amount * 2  # Correctly double the amount for the next trade
-                    amount_doubled = True  # Set the flag to indicate the amount has been doubled
-                    log_message(f"Dobrar valor da negociação. Próximo valor de negociação: R${current_amount}")
+                    if not amount_doubled:  # Ensure the amount is only doubled once per loss
+                        current_amount = current_amount * 2  # Correctly double the amount
+                        amount_doubled = True  # Set the flag to indicate the amount has been doubled
+                        log_message(f"Dobrar valor da negociação. Próximo valor de negociação: R${current_amount}")
                 else:
                     consecutive_losses = 0
-                    set_amount()  # Reset to 5% of the balance after a win
+                    set_amount()  # Reset to 10% of the balance after a win
                     amount_doubled = False  # Reset the flag
                     log_message(f"Negociação bem-sucedida. Valor de negociação resetado para: R${current_amount}")
 
@@ -845,14 +848,14 @@ def update_log():
     if running:
         root.after(1000, update_log)
 
-# Update the set_amount function to use 5% of the account balance
+# Update the set_amount function to use 10% of the account balance
 def set_amount():
     global initial_amount
     global current_amount
     balance = iq.get_balance()
-    initial_amount = balance * 0.05  # Set to 5% of the balance
+    initial_amount = balance * 0.10  # Set to 10% of the balance
     current_amount = initial_amount
-    log_message(f"Initial amount set to 5% of balance: R${initial_amount:.2f}")
+    log_message(f"Initial amount set to 10% of balance: R${initial_amount:.2f}")
     balance_label.config(text=f"Balance: R${balance:.2f}")
 
 # Function to stop and start trading if the code freezes for more than 15 seconds
@@ -945,11 +948,11 @@ def simulate_trade(success):
     else:
         log_message(f"Trade failed. Amount: ${current_amount}")
         consecutive_losses += 1
-        if consecutive_losses <= martingale_limit:
-            current_amount *= 2
+        if consecutive_losses <= martingale_limit and not amount_doubled:
+            current_amount *= 2  # Correctly double the amount
             amount_doubled = True
         else:
-            log_message("Martingale limit reached. Resetting to initial amount.")
+            log_message("Martingale limit reached or amount already doubled. Resetting to initial amount.")
             consecutive_losses = 0
             current_amount = initial_amount
             amount_doubled = False
@@ -1115,6 +1118,7 @@ def schedule_daily_save():
 
 # Call the schedule_daily_save function to start the daily saving process
 schedule_daily_save()
+
 
 
 
