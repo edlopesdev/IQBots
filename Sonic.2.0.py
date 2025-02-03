@@ -49,7 +49,7 @@ class TextRedirector:
         pass
 
 # Carregar credenciais do arquivo
-credentials_file = os.path.normpath(os.path.join(os.getcwd(), "credentials2.txt"))
+credentials_file = os.path.normpath(os.path.join(os.getcwd(), "credentials.txt"))
 
 def load_credentials():
     try:
@@ -125,8 +125,7 @@ on_message('')
 on_message('not a json')
 
 # Inicializar a API IQ Option
-# account_type = "PRACTICE"  # Conta Prática - Modo de teste
-account_type = "REAL"  # Conta Real
+account_type = "PRACTICE"  # Conta Prática - Modo de teste
 instrument_types = ["binary", "digital", "crypto", "otc"]  # Tipos de instrumentos suportados
 
 # Definir variáveis globais
@@ -180,7 +179,7 @@ def connect_to_iq_option(email, password):
 
 # Adapted fetch_sorted_assets function
 def fetch_sorted_assets():
-    logging.info("Buscando e classificando ativos por lucratividade e volume para negociações de 5 minutos...")
+    logging.info("Buscando e classificando ativos por lucratividade e volume para negociações de 1 minuto...")
     reconnect_if_needed()
 
     if iq is None:
@@ -196,7 +195,7 @@ def fetch_sorted_assets():
         volume = {}
         for asset, values in raw_profitability.items():
             if isinstance(values, dict):  # Tratamento para defaultdict
-                profitability[asset] = float(values.get('turbo', 0.0))  # 'turbo' is used for 5-minute trades
+                profitability[asset] = float(values.get('turbo', 0.0))  # 'turbo' is used for 1-minute trades
             else:
                 profitability[asset] = float(values)
 
@@ -210,7 +209,7 @@ def fetch_sorted_assets():
             reverse=True
         )
 
-        log_message(f"Ativos classificados por lucratividade e volume para negociações de 5 minutos: {sorted_assets}")
+        log_message(f"Ativos classificados por lucratividade e volume para negociações de 1 minuto: {sorted_assets}")
         return sorted_assets
     except Exception as e:
         log_message(f"Erro ao buscar e classificar ativos: {e}")
@@ -245,6 +244,9 @@ def fetch_historical_data(asset, duration, candle_count):
 # Função para reconectar à API
 def reconnect():
     global iq
+    retry_count = 0
+    max_retries = 5  # Maximum number of retries before giving up
+
     while True:
         if iq is None or not iq.check_connect():
             logging.info("Reconectando à API IQ Option...")
@@ -257,14 +259,23 @@ def reconnect():
                     set_amount()  # Definir o valor inicial da negociação
                     print_account_balance()  # Print account balance after successful connection
                     update_session_profit()  # Update session profit after successful connection
+                    retry_count = 0  # Reset retry count after successful connection
                 else:
                     logging.error(f"Falha na reconexão: {reason}")
+                    retry_count += 1
             except json.JSONDecodeError as e:
                 logging.error(f"Erro ao decodificar JSON durante a reconexão: {e}")
                 iq = None
+                retry_count += 1
             except Exception as e:
                 logging.error(f"Erro inesperado durante a reconexão: {e}")
                 iq = None
+                retry_count += 1
+
+            if retry_count >= max_retries:
+                logging.error("Número máximo de tentativas de reconexão atingido. Saindo...")
+                break
+
         time.sleep(10)  # Increase sleep time to avoid rapid reconnection attempts
 
 # Ensure reconnection logic is executed in the main thread
@@ -284,20 +295,20 @@ def ignore_assets(asset):
 
 def analyze_trend(data):
     """
-    Analyzes the trend of the last 15 minutes.
+    Analyzes the trend of the last 9 minutes.
     Returns 'up', 'down', or 'neutral' based on the analysis.
     """
-    if len(data) < 15:
+    if len(data) < 9:
         log_message("Dados insuficientes para análise de tendência.")
         return "neutral"
 
-    first_5_avg = data["close"].iloc[-15:-10].mean()
-    next_5_avg = data["close"].iloc[-10:-5].mean()
-    last_5_avg = data["close"].iloc[-5:].mean()
+    first_3_avg = data["close"].iloc[-9:-6].mean()
+    next_3_avg = data["close"].iloc[-6:-3].mean()
+    last_3_avg = data["close"].iloc[-3:].mean()
 
-    if first_5_avg > next_5_avg > last_5_avg:
+    if first_3_avg > next_3_avg > last_3_avg:
         return "down"
-    elif first_5_avg < next_5_avg < last_5_avg:
+    elif first_3_avg < next_3_avg < last_3_avg:
         return "up"
     else:
         return "neutral"
@@ -486,7 +497,7 @@ def analyze_indicators(asset):
             log_message("Nenhum voto válido. Pulando ativo.")
             return None
 
-        majority = (total_votes // 2) + 2  # Update majority to 50%+2
+        majority = (total_votes // 2) + 1  # Update majority to 50%+1
 
         if consecutive_losses >= 1:  # Invert votes starting from the second Martingale
             buy_votes, sell_votes = sell_votes, buy_votes
@@ -517,27 +528,6 @@ MIN_DIFFERENCE = 0.0005
 MAX_LOSS = 0.0010
 MIN_PROBABILITY = 0.6
 
-def calculate_volatility(data):
-    """
-    Calculate the volatility of the asset based on historical data.
-    """
-    data['returns'] = data['close'].pct_change()
-    volatility = data['returns'].std() * (252 ** 0.5)  # Annualized volatility
-    return volatility
-
-def is_high_volatility(asset):
-    """
-    Determine if the asset has high volatility.
-    """
-    data = fetch_historical_data(asset, 1, 100)  # Fetch last 100 candles of 1 minute each
-    if data is None or data.empty:
-        log_message(f"Sem dados suficientes para {asset}. Pulando ativo.")
-        return False
-
-    volatility = calculate_volatility(data)
-    log_message(f"Volatilidade calculada para {asset}: {volatility:.2f}")
-    return volatility > 0.05  # Example threshold for high volatility
-
 # Adapted execute_trades function
 def execute_trades():
     global running
@@ -560,13 +550,9 @@ def execute_trades():
                 log_message("Execução de negociações interrompida.")
                 break
 
-            if ignore_assets(asset):
-                log_message(f"Ignorando ativo {asset}.")
-                continue
-
             if simultaneous_trades >= max_simultaneous_trades:
                 log_message("Número máximo de negociações simultâneas atingido. Aguardando...")
-                countdown(50)  # Adjusted countdown for 5-minute trades
+                countdown(50)  # Adjusted countdown for 1-minute trades
                 check_trade_results()
                 update_session_profit()
                 continue
@@ -575,18 +561,14 @@ def execute_trades():
             check_trade_results()
             update_session_profit()
 
-            if is_high_volatility(asset):
-                log_message(f"Alta volatilidade detectada para {asset}. Pulando ativo.")
-                continue
-
             trend = identify_trend(asset)
             if trend == "neutral":
                 log_message(f"Tendência neutra para {asset}. Pulando ativo.")
                 print(f"Tendência neutra para {asset}. Pulando ativo.")
                 continue
 
-            log_message(f"Tendência para {asset}: {'Alta' if trend == 'up' else 'Baixa'}")
-            print(f"Tendência para {asset}: {'Alta' if trend == 'up' else 'Baixa'}")
+            log_message(f"Tendência para {asset}: {'Alta' if trend == "up" else 'Baixa'}")
+            print(f"Tendência para {asset}: {'Alta' if trend == "up" else 'Baixa'}")
 
             decision = analyze_indicators(asset)
             if decision == "buy" and trend == "up":
@@ -608,7 +590,7 @@ def execute_trades():
                 continue
 
             try:
-                success, trade_id = iq.buy(current_amount, asset, action, 5)  # Negociações de 5 minutos
+                success, trade_id = iq.buy(current_amount, asset, action, 1)  # Negociações de 1 minuto
                 if success:
                     simultaneous_trades += 1
                     add_trade_to_list(trade_id)
@@ -883,8 +865,7 @@ def set_amount():
     global initial_amount
     global current_amount
     balance = iq.get_balance()
-    # initial_amount = balance * 0.10  # Set to 10% of the balance
-    initial_amount = 2  # Alterado para teste
+    initial_amount = balance * 0.02  # Set to 2% of the balance
     current_amount = initial_amount
     log_message(f"Initial amount set to 10% of balance: R${initial_amount:.2f}")
     balance_label.config(text=f"Balance: R${balance:.2f}")
@@ -908,11 +889,11 @@ threading.Thread(target=watchdog, daemon=True).start()
 
 # GUI Configuration
 root = tk.Tk()
-root.title("Capybara Trader v6.9 - NICE!")
+root.title("Sonic v2.0")
 root.configure(bg="#0b1429")
 
 static_icon = PhotoImage(file="static_icon.png")
-rotating_icon = PhotoImage(file="working_capy.png")
+rotating_icon = PhotoImage(file="working_sonic.png")
 icon_label = tk.Label(root, image=static_icon, bg="#0b1429")
 icon_label.grid(row=0, column=0, rowspan=2, padx=10, pady=10)
 
@@ -1149,8 +1130,6 @@ def schedule_daily_save():
 
 # Call the schedule_daily_save function to start the daily saving process
 schedule_daily_save()
-
-
 
 
 
