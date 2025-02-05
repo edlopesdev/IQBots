@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-# Arquivo: Capybara.6.9.py NICE!
+# Arquivo: Capybara.7.0.py NICE!
 #PECUNIA IMPROMPTA
 #Codigo otimizado utilizando DeepSeek, o ChatGPT de flango
 from iqoptionapi.stable_api import IQ_Option
@@ -49,7 +49,7 @@ class TextRedirector:
         pass
 
 # Carregar credenciais do arquivo
-credentials_file = os.path.normpath(os.path.join(os.getcwd(), "credentials2.txt"))
+credentials_file = os.path.normpath(os.path.join(os.getcwd(), "credentials.txt"))
 
 def load_credentials():
     try:
@@ -63,7 +63,7 @@ def load_credentials():
 # Carregar credenciais
 email, password = load_credentials()
 
-log_file = os.path.normpath(os.path.join(os.getcwd(), "trade_log.txt"))
+log_file = os.path.normpath(os.path.join(os.getcwd(), f"trade_log_{time.strftime('%Y-%m-%d')}.txt"))
 
 def log_message(message):
     try:
@@ -125,8 +125,7 @@ on_message('')
 on_message('not a json')
 
 # Inicializar a API IQ Option
-# account_type = "PRACTICE"  # Conta Prática - Modo de teste
-account_type = "REAL"  # Conta Real
+account_type = "PRACTICE"  # Conta Prática - Modo de teste
 instrument_types = ["binary", "digital", "crypto", "otc"]  # Tipos de instrumentos suportados
 
 # Definir variáveis globais
@@ -505,26 +504,6 @@ def analyze_indicators(asset):
 
 # ...existing code...
 
-# Adapted countdown function
-def countdown(seconds):
-    while seconds > 0:
-        log_message(f"Aguardando {seconds} segundos...")
-        time.sleep(1)
-        seconds -= 1
-
-# Parâmetro de diferença mínima, perda máxima e probabilidade mínima
-MIN_DIFFERENCE = 0.0005
-MAX_LOSS = 0.0010
-MIN_PROBABILITY = 0.6
-
-def calculate_volatility(data):
-    """
-    Calculate the volatility of the asset based on historical data.
-    """
-    data['returns'] = data['close'].pct_change()
-    volatility = data['returns'].std() * (252 ** 0.5)  # Annualized volatility
-    return volatility
-
 def is_high_volatility(asset):
     """
     Determine if the asset has high volatility.
@@ -537,6 +516,8 @@ def is_high_volatility(asset):
     volatility = calculate_volatility(data)
     log_message(f"Volatilidade calculada para {asset}: {volatility:.2f}")
     return volatility > 0.05  # Example threshold for high volatility
+
+# ...existing code...
 
 # Adapted execute_trades function
 def execute_trades():
@@ -629,6 +610,8 @@ def execute_trades():
             log_message("Smart Stop ativado. Parando execução após reset para valor inicial.")
             break
 
+# ...existing code...
+
 def monitor_trade(trade_id, asset):
     global simultaneous_trades
     global session_profit
@@ -684,7 +667,7 @@ def monitor_trade(trade_id, asset):
                 log_message(f"Dobrar valor da negociação. Próximo valor de negociação: R${current_amount}")
         else:
             consecutive_losses = 0
-            set_amount()  # Reset to initial amount after a win
+            set_amount()  # Reset to 10% of the balance after a win
             amount_doubled = False  # Reset the flag
             log_message(f"Negociação bem-sucedida. Valor de negociação resetado para: R${current_amount}")
 
@@ -731,7 +714,7 @@ def check_trade_results():
                         log_message(f"Dobrar valor da negociação. Próximo valor de negociação: R${current_amount}")
                 else:
                     consecutive_losses = 0
-                    set_amount()  # Reset to initial amount after a win
+                    set_amount()  # Reset to 10% of the balance after a win
                     amount_doubled = False  # Reset the flag
                     log_message(f"Negociação bem-sucedida. Valor de negociação resetado para: R${current_amount}")
 
@@ -782,7 +765,7 @@ def check_trade_results():
                         log_message(f"Dobrar valor da negociação. Próximo valor de negociação: R${current_amount}")
                 else:
                     consecutive_losses = 0
-                    set_amount()  # Reset to initial amount after a win
+                    set_amount()  # Reset to 10% of the balance after a win
                     amount_doubled = False  # Reset the flag
                     log_message(f"Negociação bem-sucedida. Valor de negociação resetado para: R${current_amount}")
 
@@ -833,7 +816,7 @@ def check_trade_results():
                         log_message(f"Dobrar valor da negociação. Próximo valor de negociação: R${current_amount}")
                 else:
                     consecutive_losses = 0
-                    set_amount()  # Reset to initial amount after a win
+                    set_amount()  # Reset to 10% of the balance after a win
                     amount_doubled = False  # Reset the flag
                     log_message(f"Negociação bem-sucedida. Valor de negociação resetado para: R${current_amount}")
 
@@ -867,6 +850,7 @@ def stop_trading():
     log_message("Smart Stop ativado. Parando execução após reset para valor inicial.")
 
 def update_log():
+    global log_file
     try:
         with open(log_file, "r") as file:
             lines = file.readlines()
@@ -883,8 +867,8 @@ def set_amount():
     global initial_amount
     global current_amount
     balance = iq.get_balance()
-    # initial_amount = balance * 0.10  # Set to 10% of the balance
-    initial_amount = 2  # Alterado para teste
+    initial_amount = balance * 0.10  # Set to 10% of the balance
+    # initial_amount = 2  # Alterado para teste
     current_amount = initial_amount
     log_message(f"Initial amount set to 10% of balance: R${initial_amount:.2f}")
     balance_label.config(text=f"Balance: R${balance:.2f}")
@@ -903,51 +887,127 @@ def watchdog():
             start_trading()
         last_check = time.time()
 
+update_log()
+
+invalid_credentials = False
+
+if invalid_credentials:
+    log_text.insert(tk.END, "Invalid credentials. Please check the credentials.txt file.\n")
+
+root.mainloop()
+
+# ...existing code...
+
+def calculate_success_probability(asset, direction):
+    """
+    Calculate the probability of success based on technical indicators.
+    """
+    data = fetch_historical_data(asset, 1, 100)  # Fetch last 100 candles of 1 minute each
+
+    if data is None or data.empty:
+        log_message(f"Sem dados suficientes para {asset}. Pulando ativo.")
+        return 0.0
+
+    # Ensure all columns are cast to compatible dtypes
+    data["close"] = data["close"].astype(float)
+    data["open"] = data["open"].astype(float)
+    data["high"] = data["high"].astype(float)
+    data["low"] = data["low"].astype(float)
+    if "volume" in data.columns:
+        data["volume"] = data["volume"].astype(float)
+
+    # Calculate technical indicators
+    volume = data["volume"].iloc[-1]
+    candle_strength = (data["close"].iloc[-1] - data["open"].iloc[-1]) / (data["high"].iloc[-1] - data["low"].iloc[-1])
+    speed = (data["close"].iloc[-1] - data["close"].iloc[-2]) / data["close"].iloc[-2]
+    popularity = volume / data["volume"].mean()
+
+    # Combine indicators to calculate probability
+    probability = 0.25 * volume + 0.25 * candle_strength + 0.25 * speed + 0.25 * popularity
+
+    log_message(f"Probabilidade calculada para {asset}: {probability:.2f}")
+    return probability
+
+# ...existing code...
+
+def should_open_trade(opening_price, closing_price, min_difference):
+    """
+    Determine if a trade should be opened based on the price difference.
+    """
+    price_difference = abs(opening_price - closing_price)
+    if price_difference < min_difference:
+        log_message(f"Preço de abertura: {opening_price}, Preço de fechamento: {closing_price}, Diferença: {price_difference}")
+        return False
+    return True
+
+# ...existing code...
+
+def save_console_output():
+    current_date = time.strftime("%Y-%m-%d")
+    log_filename = f"console_output_{current_date}.txt"
+    log_filepath = os.path.join(os.getcwd(), log_filename)
+    
+    with open(log_filepath, "w") as file:
+        file.write(log_text.get(1.0, tk.END))
+
+# Schedule the save_console_output function to run every day at midnight
+def schedule_daily_save():
+    now = time.localtime()
+    midnight = time.mktime((now.tm_year, now.tm_mon, now.tm_mday + 1, 0, 0, 0, 0, 0, 0))
+    delay = midnight - time.mktime(now)
+    threading.Timer(delay, save_console_output).start()
+
+# Call the schedule_daily_save function to start the daily saving process
+schedule_daily_save()
+
+def calculate_volatility(data):
+    """
+    Calculate the volatility of the asset based on historical data.
+    """
+    data['returns'] = data['close'].pct_change()
+    volatility = data['returns'].std()
+    return volatility
+
+# ...existing code...
+
+
 # Start the watchdog thread
 threading.Thread(target=watchdog, daemon=True).start()
 
 # GUI Configuration
 root = tk.Tk()
-root.title("Capybara Trader v6.9 - NICE!")
-root.configure(bg="#0b1429")
+root.title("Capybara Trader v7.0")
+root.configure(bg="#040a06")
 
 static_icon = PhotoImage(file="static_icon.png")
 rotating_icon = PhotoImage(file="working_capy.png")
-icon_label = tk.Label(root, image=static_icon, bg="#0b1429")
+icon_label = tk.Label(root, image=static_icon, bg="#040a06")
 icon_label.grid(row=0, column=0, rowspan=2, padx=10, pady=10)
 
 stop_button = tk.Button(root, text="Smart Stop", command=stop_trading, bg="#F44336", fg="white", font=("Helvetica", 12))
 stop_button.grid(row=0, column=1, padx=5, pady=5)
 
-balance_label = tk.Label(root, text="Balance: R$0.00", bg="#0b1429", fg="white", font=("Helvetica", 12))
+balance_label = tk.Label(root, text="Balance: R$0.00", bg="#040a06", fg="white", font=("Helvetica", 12))
 balance_label.grid(row=1, column=1, columnspan=2, padx=5, pady=5)
 
-log_text = ScrolledText(root, height=10, font=("Courier", 10), bg="#0b1429", fg="white")
+log_text = ScrolledText(root, height=10, font=("Courier", 10), bg="#040a06", fg="white")
 log_text.grid(row=3, column=0, columnspan=5, padx=10, pady=10)
 
 # Redirect stdout and stderr to the log_text widget
 sys.stdout = TextRedirector(log_text, "stdout")
 sys.stderr = TextRedirector(log_text, "stderr")
 
-profit_label = tk.Label(root, text="Lucro: R$0.00", font=("Helvetica", 16), bg="#0b1429", fg="white")
+profit_label = tk.Label(root, text="Lucro: R$0.00", font=("Helvetica", 16), bg="#040a06", fg="white")
 profit_label.grid(row=4, column=0, columnspan=5, padx=10, pady=10)
 
 footer_label = tk.Label(
     root,
      text="@oedlopes - 2025  - Deus Seja Louvado - Sola Scriptura - Sola Fide - Solus Christus - Sola Gratia - Soli Deo Gloria",
-    bg="#0b1429",
+    bg="#040a06",
     fg="#A9A9A9",
     font=("Helvetica", 7)
 )
 footer_label.grid(row=5, column=0, columnspan=4, padx=10, pady=5, sticky="nsew")
-#À∴G∴D∴G∴A∴D∴U∴
-update_log()
-update_session_profit()
-
-# Start trading automatically
-start_trading()
-
-root.mainloop()
 
 # ...existing code...
 
@@ -1038,11 +1098,11 @@ test_martingale_logic()
 # Configuração da GUI
 root = tk.Tk()
 root.title("Capybara v6.9 - NICE!")
-root.configure(bg="#0b1429")
+root.configure(bg="#040a06")
 
 static_icon = PhotoImage(file="static_icon.png")
 rotating_icon = PhotoImage(file="working_capy.png")
-icon_label = tk.Label(root, image=static_icon, bg="#0b1429")
+icon_label = tk.Label(root, image=static_icon, bg="#040a06")
 icon_label.grid(row=0, column=0, rowspan=2, padx=10, pady=10)
 
 start_button = tk.Button(root, text="Start", command=start_trading, bg="#4CAF50", fg="white", font=("Helvetica", 12))
@@ -1051,7 +1111,7 @@ start_button.grid(row=0, column=1, padx=5, pady=5)
 stop_button = tk.Button(root, text="Stop", command=stop_trading, bg="#F44336", fg="white", font=("Helvetica", 12))
 stop_button.grid(row=0, column=2, padx=5, pady=5)
 
-amount_label = tk.Label(root, text="Initial Amount:", bg="#0b1429", fg="white", font=("Helvetica", 12))
+amount_label = tk.Label(root, text="Initial Amount:", bg="#040a06", fg="white", font=("Helvetica", 12))
 amount_label.grid(row=1, column=1, padx=5, pady=5)
 
 amount_entry = tk.Entry(root, font=("Helvetica", 12))
@@ -1061,118 +1121,30 @@ amount_entry.grid(row=1, column=2, padx=5, pady=5)
 set_button = tk.Button(root, text="Set Amount", command=lambda: set_amount(float(amount_entry.get())), bg="#FFC107", fg="black", font=("Helvetica", 12))
 set_button.grid(row=1, column=3, padx=5, pady=5)
 
-log_text = ScrolledText(root, height=10, font=("Courier", 10), bg="#0b1429", fg="white")
+log_text = ScrolledText(root, height=10, font=("Courier", 10), bg="#040a06", fg="white")
 log_text.grid(row=2, column=0, columnspan=5, padx=10, pady=10)
 
-profit_label = tk.Label(root, text="Lucro: R$0.00", font=("Helvetica", 16), bg="#0b1429", fg="white")
+profit_label = tk.Label(root, text="Lucro: R$0.00", font=("Helvetica", 16), bg="#040a06", fg="white")
 profit_label.grid(row=3, column=0, columnspan=5, padx=10, pady=10)
 
 # Rodapé
 footer_label = tk.Label(
     root,
     text="@oedlopes - 2025  - Deus seja louvado",
-    bg="#0b1429",
+    bg="#040a06",
     fg="#A9A9A9",
     font=("Helvetica", 8)
 )
 footer_label.grid(row=4, column=0, columnspan=4, padx=10, pady=5, sticky="nsew")
 
+#À∴G∴D∴G∴A∴D∴U∴
 update_log()
+update_session_profit()
 
-invalid_credentials = False
-
-if invalid_credentials:
-    log_text.insert(tk.END, "Invalid credentials. Please check the credentials.txt file.\n")
+# Start trading automatically
+start_trading()
 
 root.mainloop()
-
-# ...existing code...
-
-def calculate_success_probability(asset, direction):
-    """
-    Calculate the probability of success based on technical indicators.
-    """
-    data = fetch_historical_data(asset, 1, 100)  # Fetch last 100 candles of 1 minute each
-
-    if data is None or data.empty:
-        log_message(f"Sem dados suficientes para {asset}. Pulando ativo.")
-        return 0.0
-
-    # Ensure all columns are cast to compatible dtypes
-    data["close"] = data["close"].astype(float)
-    data["open"] = data["open"].astype(float)
-    data["high"] = data["high"].astype(float)
-    data["low"] = data["low"].astype(float)
-    if "volume" in data.columns:
-        data["volume"] = data["volume"].astype(float)
-
-    # Calculate technical indicators
-    volume = data["volume"].iloc[-1]
-    candle_strength = (data["close"].iloc[-1] - data["open"].iloc[-1]) / (data["high"].iloc[-1] - data["low"].iloc[-1])
-    speed = (data["close"].iloc[-1] - data["close"].iloc[-2]) / data["close"].iloc[-2]
-    popularity = volume / data["volume"].mean()
-
-    # Combine indicators to calculate probability
-    probability = 0.25 * volume + 0.25 * candle_strength + 0.25 * speed + 0.25 * popularity
-
-    log_message(f"Probabilidade calculada para {asset}: {probability:.2f}")
-    return probability
-
-# ...existing code...
-
-def should_open_trade(opening_price, closing_price, min_difference):
-    """
-    Determine if a trade should be opened based on the price difference.
-    """
-    price_difference = abs(opening_price - closing_price)
-    if price_difference < min_difference:
-        log_message(f"Preço de abertura: {opening_price}, Preço de fechamento: {closing_price}, Diferença: {price_difference}")
-        return False
-    return True
-
-# ...existing code...
-
-def save_console_output():
-    current_date = time.strftime("%Y-%m-%d")
-    log_filename = f"console_output_{current_date}.txt"
-    log_filepath = os.path.join(os.getcwd(), log_filename)
-    
-    with open(log_filepath, "w") as file:
-        file.write(log_text.get(1.0, tk.END))
-
-# Schedule the save_console_output function to run every day at midnight
-def schedule_daily_save():
-    now = time.localtime()
-    midnight = time.mktime((now.tm_year, now.tm_mon, now.tm_mday + 1, 0, 0, 0, 0, 0, 0))
-    delay = midnight - time.mktime(now)
-    threading.Timer(delay, save_console_output).start()
-
-# Call the schedule_daily_save function to start the daily saving process
-schedule_daily_save()
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-# Arquivo: Capybara.6.9.py NICE!
+# Arquivo: Capybara.7.1.py 
 #PECUNIA IMPROMPTA
 #Codigo otimizado utilizando DeepSeek, o ChatGPT de flango
 from iqoptionapi.stable_api import IQ_Option
@@ -125,8 +125,8 @@ on_message('')
 on_message('not a json')
 
 # Inicializar a API IQ Option
-# account_type = "PRACTICE"  # Conta Prática - Modo de teste
-account_type = "REAL"  # Conta Real
+account_type = "PRACTICE"  # Conta Prática - Modo de teste
+# account_type = "REAL"  # Conta Real
 instrument_types = ["binary", "digital", "crypto", "otc"]  # Tipos de instrumentos suportados
 
 # Definir variáveis globais
@@ -223,17 +223,23 @@ def add_trade_to_list(trade_id):
     log_message(f"Trade ID {trade_id} added to the monitoring list.")
 
 def reconnect_if_needed():
-    global iq
+    global iq, running
     if iq is None or not iq.check_connect():
         log_message("API desconectada. Tentando reconectar...")
         connect_to_iq_option(email, password)
         if not iq or not iq.check_connect():
             log_message("Falha na reconexão. Saindo...")
             running = False
+        else:
+            if not running:
+                running = True
+                threading.Thread(target=execute_trades).start()  # Restart trading if it was stopped
 
 def fetch_historical_data(asset, duration, candle_count):
     reconnect_if_needed()
-    ignored_assets = {"yahoo", "twitter", "AGN:US"}
+    if iq is None:
+        log_message(f"API desconectada. Não é possível buscar dados históricos para {asset}.")
+        return pd.DataFrame()  # Return an empty DataFrame if disconnected
     candles = iq.get_candles(asset, duration * 60, candle_count, time.time())
     df = pd.DataFrame(candles)
     df["close"] = df["close"].astype(float)
@@ -244,12 +250,12 @@ def fetch_historical_data(asset, duration, candle_count):
 
 # Função para reconectar à API
 def reconnect():
-    global iq
+    global iq, running
     while True:
-        if iq is None or not iq.check_connect():
-            logging.info("Reconectando à API IQ Option...")
-            iq = IQ_Option(email, password)
-            try:
+        try:
+            if iq is None or not iq.check_connect():
+                logging.info("Reconectando à API IQ Option...")
+                iq = IQ_Option(email, password)
                 check, reason = iq.connect()
                 if check:
                     iq.change_balance(account_type)
@@ -257,15 +263,18 @@ def reconnect():
                     set_amount()  # Definir o valor inicial da negociação
                     print_account_balance()  # Print account balance after successful connection
                     update_session_profit()  # Update session profit after successful connection
+                    if not running:
+                        running = True
+                        threading.Thread(target=execute_trades).start()  # Restart trading if it was stopped
                 else:
                     logging.error(f"Falha na reconexão: {reason}")
-            except json.JSONDecodeError as e:
-                logging.error(f"Erro ao decodificar JSON durante a reconexão: {e}")
-                iq = None
-            except Exception as e:
-                logging.error(f"Erro inesperado durante a reconexão: {e}")
-                iq = None
-        time.sleep(10)  # Increase sleep time to avoid rapid reconnection attempts
+            time.sleep(10)  # Increase sleep time to avoid rapid reconnection attempts
+        except json.JSONDecodeError as e:
+            logging.error(f"Erro ao decodificar JSON durante a reconexão: {e}")
+            iq = None
+        except Exception as e:
+            logging.error(f"Erro inesperado durante a reconexão: {e}")
+            iq = None
 
 # Ensure reconnection logic is executed in the main thread
 if __name__ == "__main__":
@@ -275,7 +284,7 @@ if __name__ == "__main__":
 threading.Thread(target=reconnect, daemon=True).start()
 
 # Define the ignore_assets function
-assets_to_ignore = set(["MSFT","CSGNZ-CHIX","TA25","DUBAI","YAHOO", "TWITTER", "AGN:US", "CXO:US","DNB:US","DOW:US","DTE:US","DUK:US","DVA:US","DVN:US","DXC:US","DXCM:US", "ETFC:US", "TWX:US"])
+assets_to_ignore = set(["MSFT","AUDMXN","CSGNZ-CHIX","TA25","DUBAI","YAHOO", "TWITTER", "AGN:US", "CXO:US","DNB:US","DOW:US","DTE:US","DUK:US","DVA:US","DVN:US","DXC:US","DXCM:US", "ETFC:US", "TWX:US"])
 
 def ignore_assets(asset):
     if instrument_types == ["forex"] and "-OTC" in asset.upper():
@@ -505,7 +514,6 @@ def analyze_indicators(asset):
 
 # ...existing code...
 
-# Adapted countdown function
 def countdown(seconds):
     while seconds > 0:
         log_message(f"Aguardando {seconds} segundos...")
@@ -619,6 +627,16 @@ def execute_trades():
                     log_message(f"Falha ao realizar negociação para {asset}. Motivo: {trade_id}")  # Log the reason for failure
             except Exception as e:
                 log_message(f"Erro durante a execução da negociação para {asset}: {e}")
+                if "WinError 10054" in str(e):
+                    log_message("Conexão perdida. Tentando reconectar...")
+                    reconnect_if_needed()
+                    if iq and iq.check_connect():
+                        log_message("Reconexão bem-sucedida. Continuando operações.")
+                        continue
+                    else:
+                        log_message("Falha na reconexão. Parando operações.")
+                        running = False
+                        break
 
         # Ensure results are checked periodically
         check_trade_results()
@@ -678,10 +696,15 @@ def monitor_trade(trade_id, asset):
 
         if result <= 0:
             consecutive_losses += 1
-            if not amount_doubled:  # Ensure the amount is only doubled once per loss
-                current_amount = current_amount * 2  # Correctly double the amount
-                amount_doubled = True  # Set the flag to indicate the amount has been doubled
-                log_message(f"Dobrar valor da negociação. Próximo valor de negociação: R${current_amount}")
+            if consecutive_losses > 3:  # Stop trading after 3 consecutive losses
+                log_message("Número de perdas consecutivas excedido. Parando negociações.")
+                running = False
+            else:
+                log_message(f"Perda consecutiva #{consecutive_losses}.")
+                if not amount_doubled:  # Ensure the amount is only doubled once per loss
+                    current_amount *= 2  # Correctly double the amount
+                    amount_doubled = True  # Set the flag to indicate the amount has been doubled
+                    log_message(f"Dobrar valor da negociação. Próximo valor de negociação: R${current_amount}")
         else:
             consecutive_losses = 0
             set_amount()  # Reset to initial amount after a win
@@ -726,109 +749,7 @@ def check_trade_results():
                 if result <= 0:
                     consecutive_losses += 1
                     if not amount_doubled:  # Ensure the amount is only doubled once per loss
-                        current_amount = current_amount * 2  # Correctly double the amount
-                        amount_doubled = True  # Set the flag to indicate the amount has been doubled
-                        log_message(f"Dobrar valor da negociação. Próximo valor de negociação: R${current_amount}")
-                else:
-                    consecutive_losses = 0
-                    set_amount()  # Reset to initial amount after a win
-                    amount_doubled = False  # Reset the flag
-                    log_message(f"Negociação bem-sucedida. Valor de negociação resetado para: R${current_amount}")
-
-                trade_list.remove(trade_id)  # Ensure the trade is removed from the list after checking
-        except Exception as e:
-            print(f"Erro ao verificar status da negociação {trade_id}: {e}")
-            log_message(f"Erro ao verificar status da negociação {trade_id}: {e}")
-
-def update_session_profit():
-    global saldo_entrada, saldo_saida, session_profit
-    total_profit = saldo_saida - saldo_entrada  # Calculate total profit based on balance difference
-    profit_label.config(text=f"Lucro: R${total_profit:.2f}", fg="green" if total_profit >= 0 else "red")
-
-def check_trade_results():
-    global trade_list
-    global session_profit
-    global consecutive_losses
-    global current_amount
-    global amount_doubled
-    
-    for trade_id in trade_list.copy():
-        try:
-            result = iq.check_win_v4(trade_id)
-            if result is not None:
-                if isinstance(result, tuple):
-                    result = result[0]  # Assuming the first element of the tuple is the profit/loss value
-                if isinstance(result, str):
-                    if result.lower() == "win":
-                        result = 1.0
-                    elif result.lower() == "loose":
-                        result = -1.0
-                    else:
-                        try:
-                            result = float(result)  # Convert string to float
-                        except ValueError:
-                            print(f"Erro ao converter resultado para float: {result}")
-                            log_message(f"Erro ao converter resultado para float: {result}")
-                            result = 0.0  # Default to 0.0 if conversion fails
-
-                session_profit += result
-                log_message(f"Resultado da negociação {trade_id}: {'Vitória' if result > 0 else 'Perda'}, Lucro={result}")
-
-                if result <= 0:
-                    consecutive_losses += 1
-                    if not amount_doubled:  # Ensure the amount is only doubled once per loss
-                        current_amount = current_amount * 2  # Correctly double the amount
-                        amount_doubled = True  # Set the flag to indicate the amount has been doubled
-                        log_message(f"Dobrar valor da negociação. Próximo valor de negociação: R${current_amount}")
-                else:
-                    consecutive_losses = 0
-                    set_amount()  # Reset to initial amount after a win
-                    amount_doubled = False  # Reset the flag
-                    log_message(f"Negociação bem-sucedida. Valor de negociação resetado para: R${current_amount}")
-
-                trade_list.remove(trade_id)  # Ensure the trade is removed from the list after checking
-        except Exception as e:
-            print(f"Erro ao verificar status da negociação {trade_id}: {e}")
-            log_message(f"Erro ao verificar status da negociação {trade_id}: {e}")
-
-def update_session_profit():
-    global saldo_entrada, saldo_saida, session_profit
-    total_profit = saldo_saida - saldo_entrada  # Calculate total profit based on balance difference
-    profit_label.config(text=f"Lucro: R${total_profit:.2f}", fg="green" if total_profit >= 0 else "red")
-
-def check_trade_results():
-    global trade_list
-    global session_profit
-    global consecutive_losses
-    global current_amount
-    global amount_doubled
-    
-    for trade_id in trade_list.copy():
-        try:
-            result = iq.check_win_v4(trade_id)
-            if result is not None:
-                if isinstance(result, tuple):
-                    result = result[0]  # Assuming the first element of the tuple is the profit/loss value
-                if isinstance(result, str):
-                    if result.lower() == "win":
-                        result = 1.0
-                    elif result.lower() == "loose":
-                        result = -1.0
-                    else:
-                        try:
-                            result = float(result)  # Convert string to float
-                        except ValueError:
-                            print(f"Erro ao converter resultado para float: {result}")
-                            log_message(f"Erro ao converter resultado para float: {result}")
-                            result = 0.0  # Default to 0.0 if conversion fails
-
-                session_profit += result
-                log_message(f"Resultado da negociação {trade_id}: {'Vitória' if result > 0 else 'Perda'}, Lucro={result}")
-
-                if result <= 0:
-                    consecutive_losses += 1
-                    if not amount_doubled:  # Ensure the amount is only doubled once per loss
-                        current_amount = current_amount * 2  # Correctly double the amount
+                        current_amount *= 2  # Correctly double the amount
                         amount_doubled = True  # Set the flag to indicate the amount has been doubled
                         log_message(f"Dobrar valor da negociação. Próximo valor de negociação: R${current_amount}")
                 else:
@@ -883,10 +804,9 @@ def set_amount():
     global initial_amount
     global current_amount
     balance = iq.get_balance()
-    # initial_amount = balance * 0.10  # Set to 10% of the balance
-    initial_amount = 2  # Alterado para teste
+    initial_amount = balance * 0.05  # Set to 5% of the balance
     current_amount = initial_amount
-    log_message(f"Initial amount set to 10% of balance: R${initial_amount:.2f}")
+    log_message(f"Initial amount set to 5% of balance: R${initial_amount:.2f}")
     balance_label.config(text=f"Balance: R${balance:.2f}")
 
 # Function to stop and start trading if the code freezes for more than 15 seconds
@@ -1149,6 +1069,25 @@ def schedule_daily_save():
 
 # Call the schedule_daily_save function to start the daily saving process
 schedule_daily_save()
+
+# ...existing code...
+
+def update_balance():
+    if iq is not None:
+        balance = iq.get_balance()
+        balance_label.config(text=f"Balance: R${balance:.2f}")
+        log_message(f"Balance updated: R${balance:.2f}")
+    root.after(60000, update_balance)  # Schedule the function to run every minute
+
+# Ensure balance is fetched and initial amount is set at the start
+connect_to_iq_option(email, password)
+set_amount()
+update_balance()  # Start the periodic balance update
+
+
+
+
+
 
 
 
