@@ -1,7 +1,7 @@
 #!/usr/bin/env python
-# Arquivo: Capybara.6.9.py NICE!
+# Arquivo: Capybara.7.2.py
 #PECUNIA IMPROMPTA
-#Codigo otimizado utilizando DeepSeek, o ChatGPT de flango
+#Código construido com Copilot e otimizado utilizando DeepSeek, o ChatGPT de flango.
 from iqoptionapi.stable_api import IQ_Option
 import threading
 import time
@@ -518,7 +518,7 @@ def is_high_volatility(asset):
     """
     Determine if the asset has high volatility.
     """
-    data = fetch_historical_data(asset, 1, 100)  # Fetch last 100 candles of 1 minute each
+    data = fetch_historical_data(asset, 1, 20)  # Fetch last 20 candles of 1 minute each
     if data is None or data.empty:
         log_message(f"Sem dados suficientes para {asset}. Pulando ativo.")
         return False
@@ -800,34 +800,34 @@ threading.Thread(target=watchdog, daemon=True).start()
 
 # GUI Configuration
 root = tk.Tk()
-root.title("Capybara Trader v6.9 - NICE!")
-root.configure(bg="#0b1429")
+root.title("Capybara v7.2")
+root.configure(bg="#130230")
 
 static_icon = PhotoImage(file="static_icon.png")
 rotating_icon = PhotoImage(file="working_capy.png")
-icon_label = tk.Label(root, image=static_icon, bg="#0b1429")
+icon_label = tk.Label(root, image=static_icon, bg="#130230")
 icon_label.grid(row=0, column=0, rowspan=2, padx=10, pady=10)
 
 stop_button = tk.Button(root, text="Smart Stop", command=stop_trading, bg="#F44336", fg="white", font=("Helvetica", 12))
 stop_button.grid(row=0, column=1, padx=5, pady=5)
 
-balance_label = tk.Label(root, text="Balance: R$0.00", bg="#0b1429", fg="white", font=("Helvetica", 12))
+balance_label = tk.Label(root, text="Balance: R$0.00", bg="#130230", fg="white", font=("Helvetica", 12))
 balance_label.grid(row=1, column=1, columnspan=2, padx=5, pady=5)
 
-log_text = ScrolledText(root, height=10, font=("Courier", 10), bg="#0b1429", fg="white")
+log_text = ScrolledText(root, height=10, font=("Courier", 10), bg="#130230", fg="white")
 log_text.grid(row=3, column=0, columnspan=5, padx=10, pady=10)
 
 # Redirect stdout and stderr to the log_text widget
 sys.stdout = TextRedirector(log_text, "stdout")
 sys.stderr = TextRedirector(log_text, "stderr")
 
-profit_label = tk.Label(root, text="Lucro: R$0.00", font=("Helvetica", 16), bg="#0b1429", fg="white")
+profit_label = tk.Label(root, text="Lucro: R$0.00", font=("Helvetica", 16), bg="#130230", fg="white")
 profit_label.grid(row=4, column=0, columnspan=5, padx=10, pady=10)
 
 footer_label = tk.Label(
     root,
      text="@oedlopes - 2025  - Deus Seja Louvado - Sola Scriptura - Sola Fide - Solus Christus - Sola Gratia - Soli Deo Gloria",
-    bg="#0b1429",
+    bg="#130230",
     fg="#A9A9A9",
     font=("Helvetica", 7)
 )
@@ -924,12 +924,13 @@ test_martingale_logic()
 
 # Configuração da GUI
 root = tk.Tk()
-root.title("Capybara v6.9 - NICE!")
-root.configure(bg="#0b1429")
+root.title("Capybara v7.2")
+root.configure(bg="#130230")
+
 
 static_icon = PhotoImage(file="static_icon.png")
 rotating_icon = PhotoImage(file="working_capy.png")
-icon_label = tk.Label(root, image=static_icon, bg="#0b1429")
+icon_label = tk.Label(root, image=static_icon, bg="#130230")
 icon_label.grid(row=0, column=0, rowspan=2, padx=10, pady=10)
 
 start_button = tk.Button(root, text="Start", command=start_trading, bg="#4CAF50", fg="white", font=("Helvetica", 12))
@@ -938,7 +939,7 @@ start_button.grid(row=0, column=1, padx=5, pady=5)
 stop_button = tk.Button(root, text="Stop", command=stop_trading, bg="#F44336", fg="white", font=("Helvetica", 12))
 stop_button.grid(row=0, column=2, padx=5, pady=5)
 
-amount_label = tk.Label(root, text="Initial Amount:", bg="#0b1429", fg="white", font=("Helvetica", 12))
+amount_label = tk.Label(root, text="Initial Amount:", bg="#130230", fg="white", font=("Helvetica", 12))
 amount_label.grid(row=1, column=1, padx=5, pady=5)
 
 amount_entry = tk.Entry(root, font=("Helvetica", 12))
@@ -948,17 +949,17 @@ amount_entry.grid(row=1, column=2, padx=5, pady=5)
 set_button = tk.Button(root, text="Set Amount", command=lambda: set_amount(float(amount_entry.get())), bg="#FFC107", fg="black", font=("Helvetica", 12))
 set_button.grid(row=1, column=3, padx=5, pady=5)
 
-log_text = ScrolledText(root, height=10, font=("Courier", 10), bg="#0b1429", fg="white")
+log_text = ScrolledText(root, height=10, font=("Courier", 10), bg="#130230", fg="white")
 log_text.grid(row=2, column=0, columnspan=5, padx=10, pady=10)
 
-profit_label = tk.Label(root, text="Lucro: R$0.00", font=("Helvetica", 16), bg="#0b1429", fg="white")
+profit_label = tk.Label(root, text="Lucro: R$0.00", font=("Helvetica", 16), bg="#130230", fg="white")
 profit_label.grid(row=3, column=0, columnspan=5, padx=10, pady=10)
 
 # Rodapé
 footer_label = tk.Label(
     root,
     text="@oedlopes - 2025  - Deus seja louvado",
-    bg="#0b1429",
+    bg="#130230",
     fg="#A9A9A9",
     font=("Helvetica", 8)
 )
@@ -1042,6 +1043,7 @@ def update_balance():
 connect_to_iq_option(email, password)
 set_amount()
 update_balance()  # Start the periodic balance update
+
 
 
 
