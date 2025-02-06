@@ -43,7 +43,7 @@ goto menu
 
 :launch_both
 for /l %%i in (1,1,%instances%) do (
-    start cmd /c python Capybara.7.1.py
+    start cmd /c python Capybara.7.2.py
     start cmd /c python Sonic.2.1.py
 )
 goto menu
