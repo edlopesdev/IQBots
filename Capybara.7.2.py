@@ -527,6 +527,16 @@ def is_high_volatility(asset):
     log_message(f"Volatilidade calculada para {asset}: {volatility:.2f}")
     return volatility > 0.05  # Example threshold for high volatility
 
+def should_open_trade(opening_price, closing_price, min_difference):
+    """
+    Determine if a trade should be opened based on the price difference.
+    """
+    price_difference = abs(opening_price - closing_price)
+    if price_difference < min_difference:
+        log_message(f"Preço de abertura: {opening_price}, Preço de fechamento: {closing_price}, Diferença: {price_difference}")
+        return False
+    return True
+
 # Adapted execute_trades function
 def execute_trades():
     global running
@@ -677,11 +687,13 @@ def monitor_trade(trade_id, asset):
                     current_amount *= 2  # Correctly double the amount
                     amount_doubled = True  # Set the flag to indicate the amount has been doubled
                     log_message(f"Dobrar valor da negociação. Próximo valor de negociação: R${current_amount}")
+                    update_martingale_label()  # Update Martingale label
         else:
             consecutive_losses = 0
             set_amount()  # Reset to initial amount after a win
             amount_doubled = False  # Reset the flag
             log_message(f"Negociação bem-sucedida. Valor de negociação resetado para: R${current_amount}")
+            update_martingale_label()  # Update Martingale label
 
     finally:
         simultaneous_trades -= 1
@@ -724,11 +736,13 @@ def check_trade_results():
                         current_amount *= 2  # Correctly double the amount
                         amount_doubled = True  # Set the flag to indicate the amount has been doubled
                         log_message(f"Dobrar valor da negociação. Próximo valor de negociação: R${current_amount}")
+                        update_martingale_label()  # Update Martingale label
                 else:
                     consecutive_losses = 0
                     set_amount()  # Reset to initial amount after a win
                     amount_doubled = False  # Reset the flag
                     log_message(f"Negociação bem-sucedida. Valor de negociação resetado para: R${current_amount}")
+                    update_martingale_label()  # Update Martingale label
 
                 trade_list.remove(trade_id)  # Ensure the trade is removed from the list after checking
         except Exception as e:
@@ -780,6 +794,14 @@ def set_amount():
     current_amount = initial_amount
     log_message(f"Initial amount set to 2% of balance: R${initial_amount:.2f}")
     balance_label.config(text=f"Balance: R${balance:.2f}")
+    update_martingale_label()  # Update Martingale label
+
+# Function to update the Martingale label
+def update_martingale_label():
+    if current_amount > initial_amount:
+        martingale_label.config(text="M", fg="red")
+    else:
+        martingale_label.config(text="M", fg="#130230")  # Same color as the background
 
 # Function to stop and start trading if the code freezes for more than 15 seconds
 def watchdog():
@@ -813,6 +835,10 @@ stop_button.grid(row=0, column=1, padx=5, pady=5)
 
 balance_label = tk.Label(root, text="Balance: R$0.00", bg="#130230", fg="white", font=("Helvetica", 12))
 balance_label.grid(row=1, column=1, columnspan=2, padx=5, pady=5)
+
+# Add Martingale label
+martingale_label = tk.Label(root, text="M", bg="#130230", fg="#130230", font=("Helvetica", 12))
+martingale_label.grid(row=1, column=3, padx=5, pady=5)
 
 log_text = ScrolledText(root, height=10, font=("Courier", 10), bg="#130230", fg="white")
 log_text.grid(row=3, column=0, columnspan=5, padx=10, pady=10)
@@ -1043,6 +1069,7 @@ def update_balance():
 connect_to_iq_option(email, password)
 set_amount()
 update_balance()  # Start the periodic balance update
+
 
 
 
