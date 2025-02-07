@@ -20,7 +20,7 @@ if errorlevel 1 goto launch
 :launch
 echo Lançando %instances% instâncias...
 for /l %%i in (1,1,%instances%) do (
-    start cmd /c python Sonic.2.1.py
+    start cmd /c python Sonic.2.2.py
     timeout /t 1 /nobreak >nul
 )
 pause

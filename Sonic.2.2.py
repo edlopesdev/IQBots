@@ -49,7 +49,7 @@ class TextRedirector:
         pass
 
 # Carregar credenciais do arquivo
-credentials_file = os.path.normpath(os.path.join(os.getcwd(), "credentials2.txt"))
+credentials_file = os.path.normpath(os.path.join(os.getcwd(), "credentials.txt"))
 
 def load_credentials():
     try:
@@ -180,7 +180,7 @@ def connect_to_iq_option(email, password):
 
 # Adapted fetch_sorted_assets function
 def fetch_sorted_assets():
-    logging.info("Buscando e classificando ativos por lucratividade e volume para negociações de 5 minutos...")
+    logging.info("Buscando e classificando ativos por lucratividade e volume para negociações de 1 minuto...")
     reconnect_if_needed()
 
     if iq is None:
@@ -196,7 +196,7 @@ def fetch_sorted_assets():
         volume = {}
         for asset, values in raw_profitability.items():
             if isinstance(values, dict):  # Tratamento para defaultdict
-                profitability[asset] = float(values.get('turbo', 0.0))  # 'turbo' is used for 5-minute trades
+                profitability[asset] = float(values.get('turbo', 0.0))  # 'turbo' is used for 1-minute trades
             else:
                 profitability[asset] = float(values)
 
@@ -210,7 +210,7 @@ def fetch_sorted_assets():
             reverse=True
         )
 
-        log_message(f"Ativos classificados por lucratividade e volume para negociações de 5 minutos: {sorted_assets}")
+        log_message(f"Ativos classificados por lucratividade e volume para negociações de 1 minuto: {sorted_assets}")
         return sorted_assets
     except Exception as e:
         log_message(f"Erro ao buscar e classificar ativos: {e}")
@@ -305,35 +305,9 @@ def analyze_last_candles(data):
     else:
         return "neutral"
 
-def analyze_trend(asset):
-    """
-    Analyzes the trend based on the last 15 minutes of 1-minute candles.
-    Returns 'up', 'down', or 'neutral' based on the analysis.
-    """
-    data = fetch_historical_data(asset, 1, 15)
-    if data is None or data.empty:
-        log_message(f"Sem dados suficientes para análise de tendência de {asset}.")
-        return "neutral"
-
-    first_5_avg = data["close"].iloc[:5].mean()
-    middle_5_avg = data["close"].iloc[5:10].mean()
-    last_5_avg = data["close"].iloc[10:].mean()
-
-    if first_5_avg > middle_5_avg > last_5_avg:
-        return "down"
-    elif first_5_avg < middle_5_avg < last_5_avg:
-        return "up"
-    else:
-        return "neutral"
-
 def analyze_indicators(asset):
     if ignore_assets(asset):
         log_message(f"Ignorando ativo {asset}.")
-        return None
-
-    trend = analyze_trend(asset)
-    if trend == "neutral":
-        log_message(f"Mercado lateralizado para {asset}. Pulando ativo.")
         return None
 
     log_message(f"Analisando indicadores para {asset}...")
@@ -566,7 +540,7 @@ def execute_trades():
 
             if simultaneous_trades >= max_simultaneous_trades:
                 log_message("Número máximo de negociações simultâneas atingido. Aguardando...")
-                countdown(50)  # Adjusted countdown for 5-minute trades
+                countdown(60)  # Adjusted countdown for 1-minute trades
                 check_trade_results()
                 update_session_profit()
                 continue
@@ -580,9 +554,9 @@ def execute_trades():
                 continue
 
             decision = analyze_indicators(asset)
-            if decision == "buy" and analyze_trend(asset) == "up":
+            if decision == "buy":
                 action = "call"
-            elif decision == "sell" and analyze_trend(asset) == "down":
+            elif decision == "sell":
                 action = "put"
             else:
                 log_message(f"Pulando negociação para {asset}. Sem consenso ou tendência contrária.")
@@ -599,7 +573,7 @@ def execute_trades():
                 continue
 
             try:
-                success, trade_id = iq.buy(current_amount, asset, action, 5)  # Negociações de 5 minutos
+                success, trade_id = iq.buy(current_amount, asset, action, 1)  # Negociações de 1 minuto
                 if success:
                     simultaneous_trades += 1
                     add_trade_to_list(trade_id)
@@ -787,14 +761,14 @@ def update_log():
     if running:
         root.after(1000, update_log)
 
-# Update the set_amount function to use 5% of the account balance
+# Update the set_amount function to use 2% of the account balance
 def set_amount():
     global initial_amount
     global current_amount
     balance = iq.get_balance()
-    initial_amount = balance * 0.05  # Set to 5% of the balance
+    initial_amount = balance * 0.02  # Set to 2% of the balance
     current_amount = initial_amount
-    log_message(f"Initial amount set to 5% of balance: R${initial_amount:.2f}")
+    log_message(f"Initial amount set to 2% of balance: R${initial_amount:.2f}")
     balance_label.config(text=f"Balance: R${balance:.2f}")
     update_martingale_label()  # Update Martingale label
 
@@ -824,11 +798,11 @@ threading.Thread(target=watchdog, daemon=True).start()
 
 # GUI Configuration
 root = tk.Tk()
-root.title("Capybara v7.2")
+root.title("Sonic v2.2")
 root.configure(bg="#130230")
 
 static_icon = PhotoImage(file="static_icon.png")
-rotating_icon = PhotoImage(file="working_capy.png")
+rotating_icon = PhotoImage(file="working_sonic.png")
 icon_label = tk.Label(root, image=static_icon, bg="#130230")
 icon_label.grid(row=0, column=0, rowspan=2, padx=10, pady=10)
 
@@ -952,7 +926,7 @@ test_martingale_logic()
 
 # Configuração da GUI
 root = tk.Tk()
-root.title("Capybara v7.2")
+root.title("Sonic v2.2")
 root.configure(bg="#130230")
 
 

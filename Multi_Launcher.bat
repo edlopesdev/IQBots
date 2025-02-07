@@ -31,20 +31,20 @@ goto launch_both
 
 :launch_capybara
 for /l %%i in (1,1,%instances%) do (
-    start cmd /c python Capybara.7.1.py
+    start cmd /c python Capybara.7.2.py
 )
 goto menu
 
 :launch_sonic
 for /l %%i in (1,1,%instances%) do (
-    start cmd /c python Sonic.2.1.py
+    start cmd /c python Sonic.2.2.py
 )
 goto menu
 
 :launch_both
 for /l %%i in (1,1,%instances%) do (
     start cmd /c python Capybara.7.2.py
-    start cmd /c python Sonic.2.1.py
+    start cmd /c python Sonic.2.2.py
 )
 goto menu
 
