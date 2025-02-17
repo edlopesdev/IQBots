@@ -125,8 +125,8 @@ on_message('')
 on_message('not a json')
 
 # Inicializar a API IQ Option
-account_type = "PRACTICE"  # Conta Prática - Modo de teste
-# account_type = "REAL"  # Conta Real
+# account_type = "PRACTICE"  # Conta Prática - Modo de teste
+account_type = "REAL"  # Conta Real
 instrument_types = ["binary", "digital", "crypto", "otc"]  # Tipos de instrumentos suportados
 
 # Definir variáveis globais
@@ -794,7 +794,8 @@ def set_amount():
     global initial_amount
     global current_amount
     balance = iq.get_balance()
-    initial_amount = balance * 0.02  # Set to 2% of the balance
+    # initial_amount = balance * 0.02  # Set to 2% of the balance
+    initial_amount = 2 #fixed for raising starting amount
     current_amount = initial_amount
     log_message(f"Initial amount set to 2% of balance: R${initial_amount:.2f}")
     balance_label.config(text=f"Balance: R${balance:.2f}")

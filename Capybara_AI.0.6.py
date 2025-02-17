@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-# Arquivo: Capybara.7.7.py
+# Arquivo: Capybara_AI.0.2.py
 #PECUNIA IMPROMPTA
 #Código construido com Copilot e otimizado utilizando DeepSeek, o ChatGPT de flango.
 from iqoptionapi.stable_api import IQ_Option
@@ -32,6 +32,9 @@ from pyti.detrended_price_oscillator import detrended_price_oscillator as pyti_d
 from pyti.ultimate_oscillator import ultimate_oscillator as pyti_ultimate
 from pyti.aroon import aroon_up as pyti_aroon_up, aroon_down as pyti_aroon_down
 from trading_strategy import should_open_trade, should_abandon_trade, calculate_success_probability, should_enter_trade
+import joblib
+import numpy as np
+from sklearn.neural_network import MLPClassifier
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -538,7 +541,30 @@ def should_open_trade(opening_price, closing_price, min_difference):
         return False
     return True
 
-# Adapted execute_trades function
+# Carregar o modelo treinado
+model_file = "IA/capybara-ai-project/models/trained_model.pkl"
+model = joblib.load(model_file)
+
+def collect_data(asset):
+    """Collect data for the last 60 minutes."""
+    return fetch_historical_data(asset, 1, 60)
+
+def calculate_indicators(data):
+    """Calculate indicators from the collected data."""
+    indicators = {
+        "rsi": ta.rsi(data["close"], length=14).iloc[-1],
+        "macd": ta.macd(data["close"]).iloc[-1]["MACD_12_26_9"],
+        "ema": ta.ema(data["close"], length=20).iloc[-1],
+        "sma": ta.sma(data["close"], length=50).iloc[-1],
+        "volatility": calculate_volatility(data)
+    }
+    return indicators
+
+def update_model(model, X, y):
+    """Update the model with new data."""
+    model.partial_fit(X, y, classes=np.unique(y))
+    joblib.dump(model, model_file)
+
 def execute_trades():
     global running
     global current_amount
@@ -571,14 +597,13 @@ def execute_trades():
                 update_session_profit()
                 continue
 
-            # Ensure results are checked periodically and reset amount if needed
-            check_trade_results()
-            update_session_profit()
-
-            if is_high_volatility(asset):
-                log_message(f"Alta volatilidade detectada para {asset}. Pulando ativo.")
-                continue
-
+            # Coletar dados dos últimos 60 minutos
+            data = collect_data(asset)
+            
+            # Calcular indicadores
+            indicators = calculate_indicators(data)
+            
+            # Tomar decisão de compra/venda
             decision = analyze_indicators(asset)
             if decision == "buy":
                 action = "call"
@@ -605,7 +630,7 @@ def execute_trades():
                     add_trade_to_list(trade_id)
                     log_message(f"Negociação realizada com sucesso para {asset}. ID da negociação={trade_id}")
                     print(f"Balance after opening trade: {iq.get_balance()}")  # Display balance after opening trade
-                    threading.Thread(target=monitor_trade, args=(trade_id, asset)).start()
+                    threading.Thread(target=monitor_trade, args=(trade_id, asset, indicators)).start()
                 else:
                     log_message(f"Falha ao realizar negociação para {asset}. Motivo: {trade_id}")  # Log the reason for failure
             except Exception as e:
@@ -613,24 +638,9 @@ def execute_trades():
                 if "WinError 10054" in str(e):
                     log_message("Conexão perdida. Tentando reconectar...")
                     reconnect_if_needed()
-                    if iq and iq.check_connect():
-                        log_message("Reconexão bem-sucedida. Continuando operações.")
-                        continue
-                    else:
-                        log_message("Falha na reconexão. Parando operações.")
-                        running = False
-                        break
+                    continue
 
-        # Ensure results are checked periodically
-        check_trade_results()
-        update_session_profit()
-
-        if smart_stop and current_amount == initial_amount:
-            running = False
-            log_message("Smart Stop ativado. Parando execução após reset para valor inicial.")
-            break
-
-def monitor_trade(trade_id, asset):
+def monitor_trade(trade_id, asset, indicators):
     global simultaneous_trades
     global session_profit
     global consecutive_losses
@@ -652,7 +662,6 @@ def monitor_trade(trade_id, asset):
             except Exception as e:
                 print(f"Erro ao verificar status da negociação {trade_id}: {e}")
                 log_message(f"Erro ao verificar status da negociação {trade_id}: {e}")
-                time.sleep(1)
 
         if isinstance(result, tuple):
             result = result[0]  # Assuming the first element of the tuple is the profit/loss value
@@ -675,6 +684,11 @@ def monitor_trade(trade_id, asset):
         print(f"Resultado da negociação para {asset}: {'Vitória' if result > 0 else 'Perda'}, Lucro={result}")
         log_message(f"Resultado da negociação para {asset}: {'Vitória' if result > 0 else 'Perda'}, Lucro={result}")
 
+        # Atualizar o modelo com o resultado da negociação
+        y = [1 if result > 0 else 0]
+        X = np.array(list(indicators.values())).reshape(1, -1)
+        update_model(model, X, y)
+
         update_session_profit()
 
         if result <= 0:
@@ -695,7 +709,6 @@ def monitor_trade(trade_id, asset):
             consecutive_losses = 0
             set_amount()  # Reset to initial amount after a win
             amount_doubled = False  # Reset the flag
-            print("Negociação Bem Sucedida, Restaurando Indicadores")
             log_message(f"Negociação bem-sucedida. Valor de negociação resetado para: R${current_amount}")
             update_martingale_label()  # Update Martingale label
 
@@ -826,7 +839,7 @@ threading.Thread(target=watchdog, daemon=True).start()
 
 # GUI Configuration
 root = tk.Tk()
-root.title(f"Capybara v7.7 - Conta: {account_type} - {email}")
+root.title(f"Capybara AI v0.6 - Conta: {account_type} - {email}")
 root.configure(bg="#000000")
 
 static_icon = PhotoImage(file="static_icon.png")
@@ -1002,7 +1015,7 @@ invalid_credentials = False
 if invalid_credentials:
     log_text.insert(tk.END, "Invalid credentials. Please check the credentials.txt file.\n")
 
-root.mainloop()
+
 
 def calculate_success_probability(asset, direction):
     """
@@ -1074,42 +1087,4 @@ connect_to_iq_option(email, password)
 set_amount()
 update_balance()  # Start the periodic balance update
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+root.mainloop()

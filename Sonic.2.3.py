@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-# Arquivo: Capybara.7.7.py
+# Arquivo: Capybara.7.3.py
 #PECUNIA IMPROMPTA
 #Código construido com Copilot e otimizado utilizando DeepSeek, o ChatGPT de flango.
 from iqoptionapi.stable_api import IQ_Option
@@ -13,7 +13,7 @@ import pandas as pd
 import pandas_ta as ta
 import json
 import logging
-import warnings
+import warnings 
 import sys
 import yfinance as yf  # Import yfinance library
 from pyti.relative_strength_index import relative_strength_index as pyti_rsi
@@ -63,9 +63,15 @@ def load_credentials():
 # Carregar credenciais
 email, password = load_credentials()
 
-log_file = os.path.normpath(os.path.join(os.getcwd(), f"trade_log_{time.strftime('%Y-%m-%d')}.txt"))
+def get_log_file():
+    current_date = time.strftime("%Y-%m-%d")
+    return os.path.normpath(os.path.join(os.getcwd(), f"trade_log_{current_date}.txt"))
+
+log_file = get_log_file()
 
 def log_message(message):
+    global log_file
+    log_file = get_log_file()  # Update log file daily
     try:
         with open(log_file, "a") as file:
             file.write(message + "\n")
@@ -180,7 +186,7 @@ def connect_to_iq_option(email, password):
 
 # Adapted fetch_sorted_assets function
 def fetch_sorted_assets():
-    logging.info("Buscando e classificando ativos por lucratividade e volume para negociações de 5 minutos...")
+    logging.info("Buscando e classificando ativos por lucratividade e volume para negociações de 1 minuto...")
     reconnect_if_needed()
 
     if iq is None:
@@ -305,35 +311,13 @@ def analyze_last_candles(data):
     else:
         return "neutral"
 
-def analyze_trend(asset):
-    """
-    Analyzes the trend based on the last 15 minutes of 1-minute candles.
-    Returns 'up', 'down', or 'neutral' based on the analysis.
-    """
-    data = fetch_historical_data(asset, 1, 15)
-    if data is None or data.empty:
-        log_message(f"Sem dados suficientes para análise de tendência de {asset}.")
-        return "neutral"
-
-    first_5_avg = data["close"].iloc[:5].mean()
-    middle_5_avg = data["close"].iloc[5:10].mean()
-    last_5_avg = data["close"].iloc[10:].mean()
-
-    if first_5_avg > middle_5_avg > last_5_avg:
-        return "down"
-    elif first_5_avg < middle_5_avg < last_5_avg:
-        return "up"
-    else:
-        return "neutral"
+# Variável para controlar a inversão de indicadores
+invert_indicators = False
 
 def analyze_indicators(asset):
+    global invert_indicators
     if ignore_assets(asset):
         log_message(f"Ignorando ativo {asset}.")
-        return None
-
-    trend = analyze_trend(asset)
-    if trend == "neutral":
-        log_message(f"Mercado lateralizado para {asset}. Pulando ativo.")
         return None
 
     log_message(f"Analisando indicadores para {asset}...")
@@ -395,77 +379,140 @@ def analyze_indicators(asset):
 
         decisions = []
 
-        if indicators.get("rsi") is not None:
-            if indicators["rsi"] < 30:
-                decisions.append("buy")
-            elif indicators["rsi"] > 70:
-                decisions.append("sell")
+        if invert_indicators:
+            log_message(f"Invertendo indicadores para {asset} devido ao terceiro Martingale.")
+            if indicators.get("rsi") is not None:
+                if indicators["rsi"] > 70:
+                    decisions.append("buy")
+                elif indicators["rsi"] < 30:
+                    decisions.append("sell")
+            if indicators.get("macd") is not None:
+                if indicators["macd"] < 0:
+                    decisions.append("buy")
+                elif indicators["macd"] > 0:
+                    decisions.append("sell")
+            if indicators.get("ema") is not None:
+                if data["close"].iloc[-1] < indicators["ema"]:
+                    decisions.append("buy")
+                elif data["close"].iloc[-1] > indicators["ema"]:
+                    decisions.append("sell")
+            if indicators.get("sma") is not None:
+                if data["close"].iloc[-1] < indicators["sma"]:
+                    decisions.append("buy")
+                elif data["close"].iloc[-1] > indicators["sma"]:
+                    decisions.append("sell")
+            if indicators.get("stochastic") is not None:
+                if indicators["stochastic"] > 80:
+                    decisions.append("buy")
+                elif indicators["stochastic"] < 20:
+                    decisions.append("sell")
+            if indicators.get("bollinger_low") is not None and indicators.get("bollinger_high") is not None:
+                if data["close"].iloc[-1] > indicators["bollinger_high"]:
+                    decisions.append("buy")
+                elif data["close"].iloc[-1] < indicators["bollinger_low"]:
+                    decisions.append("sell")
+            if indicators.get("cci") is not None:
+                if indicators["cci"] > 100:
+                    decisions.append("buy")
+                elif indicators["cci"] < -100:
+                    decisions.append("sell")
+            if indicators.get("willr") is not None:
+                if indicators["willr"] > -20:
+                    decisions.append("buy")
+                elif indicators["willr"] < -80:
+                    decisions.append("sell")
+            if indicators.get("roc") is not None:
+                if indicators["roc"] < 0:
+                    decisions.append("buy")
+                else:
+                    decisions.append("sell")
+            if indicators.get("mfi") is not None:
+                if indicators["mfi"] > 80:
+                    decisions.append("buy")
+                elif indicators["mfi"] < 20:
+                    decisions.append("sell")
+            if indicators.get("aroon_up") is not None and indicators.get("aroon_down") is not None:
+                if indicators["aroon_down"] > 70:
+                    decisions.append("buy")
+                if indicators["aroon_up"] > 70:
+                    decisions.append("sell")
+            if indicators.get("last_candles") is not None:
+                if indicators["last_candles"] == "down":
+                    decisions.append("buy")
+                elif indicators["last_candles"] == "up":
+                    decisions.append("sell")
+        else:
+            if indicators.get("rsi") is not None:
+                if indicators["rsi"] < 30:
+                    decisions.append("buy")
+                elif indicators["rsi"] > 70:
+                    decisions.append("sell")
 
-        if indicators.get("macd") is not None:
-            if indicators["macd"] > 0:
-                decisions.append("buy")
-            elif indicators["macd"] < 0:
-                decisions.append("sell")
+            if indicators.get("macd") is not None:
+                if indicators["macd"] > 0:
+                    decisions.append("buy")
+                elif indicators["macd"] < 0:
+                    decisions.append("sell")
 
-        if indicators.get("ema") is not None:
-            if data["close"].iloc[-1] > indicators["ema"] and trend == "up":
-                decisions.append("buy")
-            elif data["close"].iloc[-1] < indicators["ema"] and trend == "down":
-                decisions.append("sell")
+            if indicators.get("ema") is not None:
+                if data["close"].iloc[-1] > indicators["ema"]:
+                    decisions.append("buy")
+                elif data["close"].iloc[-1] < indicators["ema"]:
+                    decisions.append("sell")
 
-        if indicators.get("sma") is not None:
-            if data["close"].iloc[-1] > indicators["sma"] and trend == "up":
-                decisions.append("buy")
-            elif data["close"].iloc[-1] < indicators["sma"] and trend == "down":
-                decisions.append("sell")
+            if indicators.get("sma") is not None:
+                if data["close"].iloc[-1] > indicators["sma"]:
+                    decisions.append("buy")
+                elif data["close"].iloc[-1] < indicators["sma"]:
+                    decisions.append("sell")
 
-        if indicators.get("stochastic") is not None:
-            if indicators["stochastic"] < 20:
-                decisions.append("buy")
-            elif indicators["stochastic"] > 80:
-                decisions.append("sell")
+            if indicators.get("stochastic") is not None:
+                if indicators["stochastic"] < 20:
+                    decisions.append("buy")
+                elif indicators["stochastic"] > 80:
+                    decisions.append("sell")
 
-        if indicators.get("bollinger_low") is not None and indicators.get("bollinger_high") is not None:
-            if data["close"].iloc[-1] < indicators["bollinger_low"]:
-                decisions.append("buy")
-            elif data["close"].iloc[-1] > indicators["bollinger_high"]:
-                decisions.append("sell")
+            if indicators.get("bollinger_low") is not None and indicators.get("bollinger_high") is not None:
+                if data["close"].iloc[-1] < indicators["bollinger_low"]:
+                    decisions.append("buy")
+                elif data["close"].iloc[-1] > indicators["bollinger_high"]:
+                    decisions.append("sell")
 
-        if indicators.get("cci") is not None:
-            if indicators["cci"] < -100:
-                decisions.append("buy")
-            elif indicators["cci"] > 100:
-                decisions.append("sell")
+            if indicators.get("cci") is not None:
+                if indicators["cci"] < -100:
+                    decisions.append("buy")
+                elif indicators["cci"] > 100:
+                    decisions.append("sell")
 
-        if indicators.get("willr") is not None:
-            if indicators["willr"] < -80:
-                decisions.append("buy")
-            elif indicators["willr"] > -20:
-                decisions.append("sell")
+            if indicators.get("willr") is not None:
+                if indicators["willr"] < -80:
+                    decisions.append("buy")
+                elif indicators["willr"] > -20:
+                    decisions.append("sell")
 
-        if indicators.get("roc") is not None:
-            if indicators["roc"] > 0:
-                decisions.append("buy")
-            else:
-                decisions.append("sell")
+            if indicators.get("roc") is not None:
+                if indicators["roc"] > 0:
+                    decisions.append("buy")
+                else:
+                    decisions.append("sell")
 
-        if indicators.get("mfi") is not None:
-            if indicators["mfi"] < 20:
-                decisions.append("buy")
-            elif indicators["mfi"] > 80:
-                decisions.append("sell")
+            if indicators.get("mfi") is not None:
+                if indicators["mfi"] < 20:
+                    decisions.append("buy")
+                elif indicators["mfi"] > 80:
+                    decisions.append("sell")
 
-        if indicators.get("aroon_up") is not None and indicators.get("aroon_down") is not None:
-            if indicators["aroon_up"] > 70:
-                decisions.append("buy")
-            if indicators["aroon_down"] > 70:
-                decisions.append("sell")
+            if indicators.get("aroon_up") is not None and indicators.get("aroon_down") is not None:
+                if indicators["aroon_up"] > 70:
+                    decisions.append("buy")
+                if indicators["aroon_down"] > 70:
+                    decisions.append("sell")
 
-        if indicators.get("last_candles") is not None:
-            if indicators["last_candles"] == "up":
-                decisions.append("buy")
-            elif indicators["last_candles"] == "down":
-                decisions.append("sell")
+            if indicators.get("last_candles") is not None:
+                if indicators["last_candles"] == "up":
+                    decisions.append("buy")
+                elif indicators["last_candles"] == "down":
+                    decisions.append("sell")
 
         buy_votes = decisions.count("buy")
         sell_votes = decisions.count("sell")
@@ -478,11 +525,7 @@ def analyze_indicators(asset):
             log_message("Nenhum voto válido. Pulando ativo.")
             return None
 
-        majority = (total_votes // 2) + 2  # Update majority to 50%+2
-
-        if consecutive_losses >= 2:  # Invert votes starting from the third Martingale
-            print("Terceiro Martingale - Invertendo indicadores")
-            buy_votes, sell_votes = sell_votes, buy_votes
+        majority = (total_votes // 2) + 1  # Update majority to 50%+1
 
         if buy_votes >= majority:
             return "buy"
@@ -566,7 +609,7 @@ def execute_trades():
 
             if simultaneous_trades >= max_simultaneous_trades:
                 log_message("Número máximo de negociações simultâneas atingido. Aguardando...")
-                countdown(50)  # Adjusted countdown for 5-minute trades
+                countdown(60)  # Adjusted countdown for 1-minute trades
                 check_trade_results()
                 update_session_profit()
                 continue
@@ -585,7 +628,7 @@ def execute_trades():
             elif decision == "sell":
                 action = "put"
             else:
-                log_message(f"Pulando negociação para {asset}. Sem consenso ou tendência contrária.")
+                log_message(f"Pulando negociação para {asset}. Sem consenso.")
                 continue
 
             log_message(f"Tentando realizar negociação: Ativo={asset}, Ação={action}, Valor = R${current_amount}")
@@ -599,7 +642,7 @@ def execute_trades():
                 continue
 
             try:
-                success, trade_id = iq.buy(current_amount, asset, action, 5)  # Negociações de 5 minutos
+                success, trade_id = iq.buy(current_amount, asset, action, 1)  # Negociações de 1 minuto
                 if success:
                     simultaneous_trades += 1
                     add_trade_to_list(trade_id)
@@ -636,7 +679,7 @@ def monitor_trade(trade_id, asset):
     global consecutive_losses
     global current_amount
     global saldo_saida
-    global amount_doubled
+    global invert_indicators
 
     try:
         print(f"Monitorando negociação {trade_id} para o ativo {asset}...")
@@ -671,6 +714,7 @@ def monitor_trade(trade_id, asset):
 
         session_profit += result
         saldo_saida = iq.get_balance()  # Store balance after trade
+        update_balance()  # Update balance after trade
 
         print(f"Resultado da negociação para {asset}: {'Vitória' if result > 0 else 'Perda'}, Lucro={result}")
         log_message(f"Resultado da negociação para {asset}: {'Vitória' if result > 0 else 'Perda'}, Lucro={result}")
@@ -680,22 +724,72 @@ def monitor_trade(trade_id, asset):
         if result <= 0:
             consecutive_losses += 1
             if consecutive_losses > 3:  # Reset to initial amount after 3 consecutive losses
-                log_message("Número de perdas consecutivas excedido. Resetando valor inicial.")
+                log_message("Número de perdas consecutivas excedido. Invertendo indicadores.")
+                invert_indicators = True
                 consecutive_losses = 0
                 set_amount()  # Reset to initial amount
                 amount_doubled = False
             else:
                 log_message(f"Perda consecutiva #{consecutive_losses}.")
-                if not amount_doubled:  # Ensure the amount is only doubled once per loss
-                    current_amount *= 2  # Correctly double the amount
-                    amount_doubled = True  # Set the flag to indicate the amount has been doubled
-                    log_message(f"Dobrar valor da negociação. Próximo valor de negociação: R${current_amount}")
-                    update_martingale_label()  # Update Martingale label
+                current_amount = initial_amount * (2 ** consecutive_losses)  # Correctly double the amount for each loss
+                log_message(f"Dobrar valor da negociação. Próximo valor de negociação: R${current_amount}")
+                # Re-fetch assets, analyze volatility, and vote on indicators for Martingale trades
+                assets = fetch_sorted_assets()
+                for asset in assets:
+                    if ignore_assets(asset):
+                        log_message(f"Ignorando ativo {asset}.")
+                        continue
+
+                    if is_high_volatility(asset):
+                        log_message(f"Alta volatilidade detectada para {asset}. Pulando ativo.")
+                        continue
+
+                    decision = analyze_indicators(asset)
+                    if decision == "buy":
+                        action = "call"
+                    elif decision == "sell":
+                        action = "put"
+                    else:
+                        log_message(f"Pulando negociação para {asset}. Sem consenso.")
+                        continue
+
+                    log_message(f"Tentando realizar negociação Martingale: Ativo={asset}, Ação={action}, Valor = R${current_amount}")
+                    saldo_entrada = iq.get_balance()  # Store balance before trade
+                    print(f"Balance before opening trade: {saldo_entrada}")  # Display balance before trade
+
+                    # Verificar a disponibilidade do ativo antes de tentar negociar
+                    available_assets = iq.get_all_ACTIVES_OPCODE()
+                    if asset not in available_assets:
+                        log_message(f"Ativo {asset} não encontrado na plataforma. Pulando ativo.")
+                        continue
+
+                    try:
+                        success, trade_id = iq.buy(current_amount, asset, action, 1)  # Negociações de 1 minuto
+                        if success:
+                            simultaneous_trades += 1
+                            add_trade_to_list(trade_id)
+                            log_message(f"Negociação Martingale realizada com sucesso para {asset}. ID da negociação={trade_id}")
+                            print(f"Balance after opening trade: {iq.get_balance()}")  # Display balance after opening trade
+                            threading.Thread(target=monitor_trade, args=(trade_id, asset)).start()
+                            break  # Exit the loop after a successful trade
+                        else:
+                            log_message(f"Falha ao realizar negociação Martingale para {asset}. Motivo: {trade_id}")  # Log the reason for failure
+                    except Exception as e:
+                        log_message(f"Erro durante a execução da negociação Martingale para {asset}: {e}")
+                        if "WinError 10054" in str(e):
+                            log_message("Conexão perdida. Tentando reconectar...")
+                            reconnect_if_needed()
+                            if iq and iq.check_connect():
+                                log_message("Reconexão bem-sucedida. Continuando operações.")
+                                continue
+                            else:
+                                log_message("Falha na reconexão. Parando operações.")
+                                running = False
+                                break
         else:
             consecutive_losses = 0
             set_amount()  # Reset to initial amount after a win
-            amount_doubled = False  # Reset the flag
-            print("Negociação Bem Sucedida, Restaurando Indicadores")
+            invert_indicators = False  # Reset invert_indicators flag
             log_message(f"Negociação bem-sucedida. Valor de negociação resetado para: R${current_amount}")
             update_martingale_label()  # Update Martingale label
 
@@ -710,7 +804,6 @@ def check_trade_results():
     global session_profit
     global consecutive_losses
     global current_amount
-    global amount_doubled
     
     for trade_id in trade_list.copy():
         try:
@@ -736,19 +829,17 @@ def check_trade_results():
 
                 if result <= 0:
                     consecutive_losses += 1
-                    if not amount_doubled:  # Ensure the amount is only doubled once per loss
-                        current_amount *= 2  # Correctly double the amount
-                        amount_doubled = True  # Set the flag to indicate the amount has been doubled
-                        log_message(f"Dobrar valor da negociação. Próximo valor de negociação: R${current_amount}")
-                        update_martingale_label()  # Update Martingale label
+                    current_amount = initial_amount * (2 ** consecutive_losses)  # Correctly double the amount for each loss
+                    log_message(f"Dobrar valor da negociação. Próximo valor de negociação: R${current_amount}")
+                    update_martingale_label()  # Update Martingale label
                 else:
                     consecutive_losses = 0
                     set_amount()  # Reset to initial amount after a win
-                    amount_doubled = False  # Reset the flag
                     log_message(f"Negociação bem-sucedida. Valor de negociação resetado para: R${current_amount}")
                     update_martingale_label()  # Update Martingale label
 
                 trade_list.remove(trade_id)  # Ensure the trade is removed from the list after checking
+                update_balance()  # Update balance after checking trade results
         except Exception as e:
             print(f"Erro ao verificar status da negociação {trade_id}: {e}")
             log_message(f"Erro ao verificar status da negociação {trade_id}: {e}")
@@ -794,7 +885,8 @@ def set_amount():
     global initial_amount
     global current_amount
     balance = iq.get_balance()
-    initial_amount = balance * 0.02  # Set to 2% of the balance
+    # initial_amount = balance * 0.02  # Set to 2% of the balance
+    initial_amount = balance * 0.0333  # Set to 3,33% of the balance
     current_amount = initial_amount
     log_message(f"Initial amount set to 2% of balance: R${initial_amount:.2f}")
     balance_label.config(text=f"Balance: R${balance:.2f}")
@@ -826,11 +918,11 @@ threading.Thread(target=watchdog, daemon=True).start()
 
 # GUI Configuration
 root = tk.Tk()
-root.title(f"Capybara v7.7 - Conta: {account_type} - {email}")
+root.title(f"Sonic v2.3 - Conta: {account_type} - {email}")
 root.configure(bg="#000000")
 
 static_icon = PhotoImage(file="static_icon.png")
-rotating_icon = PhotoImage(file="working_capy.png")
+rotating_icon = PhotoImage(file="working_sonic.png")
 icon_label = tk.Label(root, image=static_icon, bg="#000000")
 icon_label.grid(row=0, column=0, rowspan=2, padx=10, pady=10)
 
@@ -954,7 +1046,7 @@ test_martingale_logic()
 
 # Configuração da GUI
 root = tk.Tk()
-root.title("Capybara v7.7")
+root.title("Capybara v7.3")
 root.configure(bg="#000000")
 
 
@@ -1073,39 +1165,6 @@ def update_balance():
 connect_to_iq_option(email, password)
 set_amount()
 update_balance()  # Start the periodic balance update
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 

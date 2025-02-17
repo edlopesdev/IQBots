@@ -32,6 +32,221 @@ from pyti.detrended_price_oscillator import detrended_price_oscillator as pyti_d
 from pyti.ultimate_oscillator import ultimate_oscillator as pyti_ultimate
 from pyti.aroon import aroon_up as pyti_aroon_up, aroon_down as pyti_aroon_down
 from trading_strategy import should_open_trade, should_abandon_trade, calculate_success_probability, should_enter_trade
+from sklearn.neural_network import MLPClassifier
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import accuracy_score
+from model_management import load_model, save_model
+
+
+#=====================================================================================================================
+# Define the model file path
+model_file = "IA/capybara-ai-project/models/trained_model.pkl"
+
+# Check if model file exists
+if not os.path.exists(model_file):
+    logging.error("Model file not found.")
+    raise ValueError("Failed to load the model.")
+
+# Load the trained model
+try:
+    clf = load_model(model_file)
+    if clf is None:
+        raise ValueError("Model is None after loading.")
+except Exception as e:
+    logging.error(f"Error loading model: {e}")
+    raise ValueError("Failed to load the model.")
+# Define the CSV file path
+csv_file_path = "path/to/your/csvfile.csv"  # Update this path with the actual path to your CSV file
+
+# Load and preprocess data
+if not os.path.exists(csv_file_path):
+    logging.error("CSV file not found.")
+    raise ValueError("Failed to load the CSV file.")
+
+csv_data = pd.read_csv(csv_file_path)
+processed_data = preprocess_data(csv_data)
+
+# Ensure data is not empty
+if processed_data['features'].empty:
+    raise ValueError("No data available for training.")
+
+# Split data into training and testing sets
+X = processed_data['features']
+y = processed_data['labels']
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+# Train the model
+clf = MLPClassifier(max_iter=200)
+clf.fit(X_train, y_train)
+
+# Evaluate the model
+y_pred = clf.predict(X_test)
+accuracy = accuracy_score(y_test, y_pred)
+logging.info(f"Model accuracy: {accuracy}")
+
+# Save the trained model
+save_model(clf, model_file)
+logging.info("Model saved successfully.")
+
+
+
+def preprocess_data(csv_data):
+    logging.info("Preprocessing data...")
+    # Drop rows with missing values
+    csv_data = csv_data.dropna()
+    
+    # Convert categorical columns to numerical
+    for column in csv_data.select_dtypes(include=['object']).columns:
+        csv_data[column] = pd.factorize(csv_data[column])[0]
+    
+    # Normalize numerical columns
+    for column in csv_data.select_dtypes(include=['number']).columns:
+        csv_data[column] = (csv_data[column] - csv_data[column].mean()) / csv_data[column].std()
+    
+    # Ensure required columns are present
+    if 'opening_price' not in csv_data.columns:
+        csv_data['opening_price'] = csv_data['Opening price']
+    if 'closing_price' not in csv_data.columns:
+        csv_data['closing_price'] = csv_data['Closing price']
+    if 'price_diff' not in csv_data.columns:
+        csv_data['price_diff'] = csv_data['closing_price'] - csv_data['opening_price']
+    if 'price_ratio' not in csv_data.columns:
+        csv_data['price_ratio'] = csv_data['closing_price'] / csv_data['opening_price']
+    
+    logging.info(f"Processed data shape: {csv_data.shape}")
+    return {'features': csv_data[['opening_price', 'closing_price', 'price_diff', 'price_ratio']], 'labels': csv_data.iloc[:, -1]}
+
+
+def preprocess_new_data(new_data):
+    logging.info("Preprocessing new data...")
+    # Drop rows with missing values
+    new_data = new_data.dropna()
+    
+    # Convert categorical columns to numerical
+    for column in new_data.select_dtypes(include=['object']).columns:
+        new_data[column] = pd.factorize(new_data[column])[0]
+    
+    # Normalize numerical columns
+    for column in new_data.select_dtypes(include=['number']).columns:
+        new_data[column] = (new_data[column] - new_data[column].mean()) / new_data[column].std()
+    
+    # Ensure required columns are present
+    if 'opening_price' not in new_data.columns:
+        new_data['opening_price'] = new_data['Opening price']
+    if 'closing_price' not in new_data.columns:
+        new_data['closing_price'] = new_data['Closing price']
+    if 'price_diff' not in new_data.columns:
+        new_data['price_diff'] = new_data['closing_price'] - new_data['opening_price']
+    if 'price_ratio' not in new_data.columns:
+        new_data['price_ratio'] = new_data['closing_price'] / new_data['opening_price']
+    
+    logging.info(f"Processed new data shape: {new_data.shape}")
+    return {'features': new_data[['opening_price', 'closing_price', 'price_diff', 'price_ratio']], 'labels': new_data.iloc[:, -1]}
+
+# Load the trained model
+model_file = "IA/capybara-ai-project/models/trained_model.pkl"
+clf = load_model(model_file)
+
+if clf is None:
+    raise ValueError("Failed to load the model.")
+model_file = "IA/capybara-ai-project/models/trained_model.pkl"
+clf = load_model(model_file)
+
+if clf is None:
+    raise ValueError("Failed to load the model.")
+
+# Load new data for predictions
+new_data_file = "IA/capybara-ai-project/data/new_data.csv"
+new_data = pd.read_csv(new_data_file)
+
+# Preprocess the new data
+processed_data = preprocess_data(new_data)
+def load_progress():
+    try:
+        with open(progress_file, "r") as file:
+            return int(file.read().strip())
+    except FileNotFoundError:
+        logging.warning("Progress file not found. Starting from the beginning.")
+        return 0
+    except ValueError:
+        logging.warning("Invalid progress file content. Starting from the beginning.")
+        return 0
+
+# Load and preprocess data
+csv_file_path = "IA/capybara-ai-project/data/new_data.csv"  # Define the path to your CSV file
+
+if not os.path.exists(csv_file_path):
+    logging.error("CSV file not found.")
+    raise ValueError("Failed to load the CSV file.")
+
+csv_data = pd.read_csv(csv_file_path)
+processed_data = preprocess_data(csv_data)
+
+# Ensure data is not empty
+if processed_data['features'].empty:
+    logging.warning("No data available for training. Waiting for data.")
+    
+# Ensure processed_data is a DataFrame
+processed_data = pd.DataFrame(processed_data)
+
+# Split data into training and testing sets
+X = processed_data['features']
+y = processed_data['labels']
+
+# Check if the data is empty
+if X.empty or y.empty:
+    logging.warning("The dataset is empty. Skipping training and evaluation.")
+else:
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+    # Train the model
+    clf = MLPClassifier(max_iter=200)
+    clf.fit(X_train, y_train)
+
+    # Evaluate the model
+    y_pred = clf.predict(X_test)
+    accuracy = accuracy_score(y_test, y_pred)
+    logging.info(f"Model accuracy: {accuracy}")
+
+    # Save the trained model
+    save_model(clf, model_file)
+    logging.info("Model saved successfully.")
+
+
+def preprocess_data(csv_data):
+    logging.info("Preprocessing data...")
+    # Drop rows with missing values
+    csv_data = csv_data.dropna()
+    
+    # Convert categorical columns to numerical
+    for column in csv_data.select_dtypes(include=['object']).columns:
+        csv_data[column] = pd.factorize(csv_data[column])[0]
+    
+    # Normalize numerical columns
+    for column in csv_data.select_dtypes(include=['number']).columns:
+        csv_data[column] = (csv_data[column] - csv_data[column].mean()) / csv_data[column].std()
+    
+    # Ensure required columns are present
+    if 'opening_price' not in csv_data.columns:
+        csv_data['opening_price'] = csv_data['Opening price']
+    if 'closing_price' not in csv_data.columns:
+        csv_data['closing_price'] = csv_data['Closing price']
+    if 'price_diff' not in csv_data.columns:
+        csv_data['price_diff'] = csv_data['closing_price'] - csv_data['opening_price']
+    if 'price_ratio' not in csv_data.columns:
+        csv_data['price_ratio'] = csv_data['closing_price'] / csv_data['opening_price']
+    
+    logging.info(f"Processed data shape: {csv_data.shape}")
+    return {'features': csv_data[['opening_price', 'closing_price', 'price_diff', 'price_ratio']], 'labels': csv_data.iloc[:, -1]}
+
+X_new = processed_data['features']
+X_new = processed_data[['opening_price', 'closing_price', 'price_diff', 'price_ratio']]
+predictions = clf.predict(X_new)
+
+# Output predictions
+print("Predictions:", predictions)
+
+#====================================================================================================================================
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -48,8 +263,14 @@ class TextRedirector:
     def flush(self):
         pass
 
-# Carregar credenciais do arquivo
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+# Define file paths
 credentials_file = os.path.normpath(os.path.join(os.getcwd(), "credentials.txt"))
+csv_file_path = os.path.normpath(os.path.join(os.getcwd(), "merged_data.csv"))  # Update this path
+progress_file = "progress.txt"
+model_file = "trained_model.pkl"
 
 def load_credentials():
     try:
@@ -59,6 +280,68 @@ def load_credentials():
             return creds.get("email"), creds.get("password")
     except FileNotFoundError:
         raise Exception("Arquivo de credenciais não encontrado. Certifique-se de que 'credentials.txt' está no diretório de trabalho.")
+
+def preprocess_new_data(new_data):
+    logging.info("Preprocessing new data...")
+    # Drop rows with missing values
+    new_data = new_data.dropna()
+    
+    # Convert categorical columns to numerical
+    for column in new_data.select_dtypes(include=['object']).columns:
+        new_data[column] = pd.factorize(new_data[column])[0]
+    
+    # Normalize numerical columns
+    for column in new_data.select_dtypes(include=['number']).columns:
+        new_data[column] = (new_data[column] - new_data[column].mean()) / new_data[column].std()
+    
+    # Ensure required columns are present
+    if 'opening_price' not in new_data.columns:
+        new_data['opening_price'] = new_data['Opening price']
+    if 'closing_price' not in new_data.columns:
+        new_data['closing_price'] = new_data['Closing price']
+    if 'price_diff' not in new_data.columns:
+        new_data['price_diff'] = new_data['closing_price'] - new_data['opening_price']
+    if 'price_ratio' not in new_data.columns:
+        new_data['price_ratio'] = new_data['closing_price'] / new_data['opening_price']
+    
+    logging.info(f"Processed new data shape: {new_data.shape}")
+    return {'features': new_data[['opening_price', 'closing_price', 'price_diff', 'price_ratio']], 'labels': new_data.iloc[:, -1]}
+
+# Load the trained model
+model_file = "models/trained_model.pkl"
+clf = load_model(model_file)
+
+if clf is None:
+    raise ValueError("Failed to load the model.")
+
+# Load new data for predictions
+new_data_file = "IA/capybara-ai-project/data/new_data.csv"
+new_data = pd.read_csv(new_data_file)
+
+# Preprocess the new data
+processed_data = preprocess_data(new_data)
+
+# Ensure data is not empty
+if processed_data.empty:
+    raise ValueError("No data available for predictions.")
+
+# Make predictions
+X_new = processed_data['features']
+predictions = clf.predict(X_new)
+
+# Output predictions
+print("Predictions:", predictions)
+
+
+def load_credentials():
+    try:
+        with open(credentials_file, "r") as file:
+            lines = file.readlines()
+            creds = {line.split('=')[0].strip(): line.split('=')[1].strip() for line in lines if '=' in line}
+            return creds.get("email"), creds.get("password")
+    except FileNotFoundError:
+        logging.error("Credentials file not found.")
+        return None, None
 
 # Carregar credenciais
 email, password = load_credentials()
