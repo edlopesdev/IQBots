@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-# Arquivo: Capybara_AI.0.6.py
+# Arquivo: Capybara.7.7.py
 #PECUNIA IMPROMPTA
 #Código construido com Copilot e otimizado utilizando DeepSeek, o ChatGPT de flango.
 from iqoptionapi.stable_api import IQ_Option
@@ -16,6 +16,7 @@ import logging
 import warnings
 import sys
 import yfinance as yf  # Import yfinance library
+import requests  # Import requests library
 from pyti.relative_strength_index import relative_strength_index as pyti_rsi
 from pyti.moving_average_convergence_divergence import moving_average_convergence_divergence as pyti_macd
 from pyti.simple_moving_average import simple_moving_average as pyti_sma
@@ -32,14 +33,35 @@ from pyti.detrended_price_oscillator import detrended_price_oscillator as pyti_d
 from pyti.ultimate_oscillator import ultimate_oscillator as pyti_ultimate
 from pyti.aroon import aroon_up as pyti_aroon_up, aroon_down as pyti_aroon_down
 from trading_strategy import should_open_trade, should_abandon_trade, calculate_success_probability, should_enter_trade
-import joblib
-import numpy as np
 from sklearn.neural_network import MLPClassifier
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import accuracy_score
 from model_management import load_model, save_model
 
 
-# Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+# Função para ler as credenciais do arquivo credentials.txt
+def read_credentials(file_path):
+    with open(file_path, 'r') as file:
+        lines = file.readlines()
+        email = lines[0].strip()
+        password = lines[1].strip()
+    return email, password
+
+# Caminho para o arquivo de credenciais
+credentials_file = 'credentials.txt'
+
+# Ler as credenciais do arquivo
+email, password = read_credentials(credentials_file)
+
+# Instancie a classe IQ_Option com os argumentos necessários
+iq = IQ_Option(email, password)
+## Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s', handlers=[
+    logging.FileHandler("training.log"),
+    logging.StreamHandler()
+])
+
 
 class TextRedirector:
     def __init__(self, widget, tag="stdout"):
@@ -52,6 +74,274 @@ class TextRedirector:
 
     def flush(self):
         pass
+
+
+# Função para buscar os 60 candles de 1 minuto antes de cada trade
+def fetch_candles(asset, timestamp):
+    candles = iq.get_candles(asset, 60, 60, timestamp)
+    return candles
+
+# Função para buscar os dados de indicadores e volatilidade
+def fetch_additional_data(asset, timestamp):
+    # Exemplo de como buscar dados adicionais (substitua pela lógica real da sua API)
+    # Aqui você pode adicionar a lógica para buscar indicadores e volatilidade
+    return {
+        'indicators': {},  # Substitua pela lógica real para buscar indicadores
+        'volatility': 0.0  # Substitua pela lógica real para buscar volatilidade
+    }
+
+def store_data(data):
+    # Store the data in a file or database for training the AI model
+    with open('trading_data.json', 'a') as f:
+        json.dump(data, f)
+        f.write('\n')
+
+def on_trade_open(asset, timestamp):
+    # Fetch candles and additional data when a trade is opened
+    candles = fetch_candles(asset, timestamp)
+    additional_data = fetch_additional_data(asset, timestamp)
+    return candles, additional_data
+
+def on_trade_close(trade_result, trade_value, asset, timestamp):
+    # Fetch candles and additional data when a trade is closed
+    candles, additional_data = on_trade_open(asset, timestamp)
+    if candles and additional_data:
+        data = {
+            'asset': asset,
+            'timestamp': timestamp,
+            'trade_result': trade_result,
+            'trade_value': trade_value,
+            'candles': candles,
+            'indicators': additional_data.get('indicators'),
+            'volatility': additional_data.get('volatility')
+        }
+  
+
+def open_trade(asset, amount, action):
+    # Open a real trade using IQ Option API
+    logging.info(f"Abrindo negociação: {asset}, {amount}, {action}")
+    timestamp = int(time.time())
+    candles, additional_data = on_trade_open(asset, timestamp)
+    check, trade_id = iq.buy(amount, asset, action, 1)  # Exemplo de abertura de negociação
+    if check:
+        logging.info(f"Negociação aberta com sucesso: {trade_id}")
+        # Esperar o resultado da negociação
+        while True:
+            check, win = iq.check_win_v3(trade_id)
+            if check:
+                trade_result = "win" if win > 0 else "loss"
+                trade_value = win
+                on_trade_close(trade_result, trade_value, asset, timestamp)
+                break
+    else:
+        logging.error("Falha ao abrir a negociação")
+
+def save_console_output():
+    current_date = time.strftime("%Y-%m-%d")
+    log_filename = f"console_output_{current_date}.txt"
+    log_filepath = os.path.join(os.getcwd(), log_filename)
+    
+    with open(log_filepath, "w") as file:
+        file.write(log_text.get(1.0, tk.END))
+
+def process_message(message):
+    try:
+        # Assuming the message is a JSON string and contains relevant fields
+        decoded_message = json.loads(message)
+        asset = decoded_message.get('asset')
+        timestamp = decoded_message.get('timestamp')
+
+        # Fetch candles and additional data
+        candles = fetch_candles(asset, timestamp)
+        additional_data = fetch_additional_data(asset, timestamp)
+
+        if candles and additional_data:
+            data = {
+                'asset': asset,
+                'price': decoded_message.get('price'),
+                'timestamp': timestamp,
+                'indicators': additional_data.get('indicators'),
+                'volatility': additional_data.get('volatility'),
+                'candles': candles,
+                'trade_result': decoded_message.get('trade_result')
+            }
+            store_data(data)
+    except Exception as e:
+        logging.error(f"Erro ao processar mensagem: {e}")
+        return None
+
+def store_data(data):
+    # Store the data in a file or database for training the AI model
+    with open('trading_data.json', 'a') as f:
+        json.dump(data, f)
+        f.write('\n')
+
+def on_trade_open(asset, timestamp):
+    # Fetch candles and additional data when a trade is opened
+    candles = fetch_candles(asset, timestamp)
+    additional_data = fetch_additional_data(asset, timestamp)
+    return candles, additional_data
+
+def on_trade_close(trade_result, trade_value, asset, timestamp):
+    # Fetch candles and additional data when a trade is closed
+    candles, additional_data = on_trade_open(asset, timestamp)
+    if candles and additional_data:
+        data = {
+            'asset': asset,
+            'timestamp': timestamp,
+            'trade_result': trade_result,
+            'trade_value': trade_value,
+            'candles': candles,
+            'indicators': additional_data.get('indicators'),
+            'volatility': additional_data.get('volatility')
+        }
+        store_data(data)
+
+def save_console_output():
+    current_date = time.strftime("%Y-%m-%d")
+    log_filename = f"console_output_{current_date}.txt"
+    log_filepath = os.path.join(os.getcwd(), log_filename)
+    
+    with open(log_filepath, "w") as file:
+        file.write(log_text.get(1.0, tk.END))
+
+
+# Schedule the save_console_output function to run every day at midnight
+def schedule_daily_save():
+    now = time.localtime()
+    midnight = time.mktime((now.tm_year, now.tm_mon, now.tm_mday + 1, 0, 0, 0, 0, 0, 0))
+    delay = midnight - time.mktime(now)
+    threading.Timer(delay, save_console_output).start()
+
+# Call the schedule_daily_save function to start the daily saving process
+schedule_daily_save()
+
+# Define the model file path
+model_file = "IA/capybara-ai-project/models/trained_model.pkl"
+
+# Trade data collection
+trade_data = []
+
+def collect_trade_data(trade_id, opening_price, closing_price, result, candles):
+    logging.info(f"Collecting trade data for trade_id: {trade_id}")
+    trade_data.append({
+        'trade_id': trade_id,
+        'opening_price': opening_price,
+        'closing_price': closing_price,
+        'price_diff': closing_price - opening_price,
+        'price_ratio': closing_price / opening_price,
+        'result': result,
+        'candles': candles
+    })
+
+def preprocess_data(csv_data):
+    logging.info("Preprocessing data...")
+    # Drop rows with missing values
+    csv_data = csv_data.dropna()
+    
+    # Convert categorical columns to numerical
+    for column in csv_data.select_dtypes(include=['object']).columns:
+        csv_data[column] = csv_data[column].astype('category').cat.codes
+    
+    # Normalize numerical columns
+    for column in csv_data.select_dtypes(include=['number']).columns:
+        csv_data[column] = (csv_data[column] - csv_data[column].mean()) / csv_data[column].std()
+    
+    # Ensure required columns are present
+    required_columns = ['opening_price', 'closing_price', 'price_diff', 'price_ratio']
+    for column in required_columns:
+        if column not in csv_data.columns:
+            raise ValueError(f"Missing required column: {column}")
+    
+    logging.info(f"Processed data shape: {csv_data.shape}")
+    return {'features': csv_data[required_columns], 'labels': csv_data['result']}
+
+
+def train_model_with_collected_data():
+    if not trade_data:
+        logging.warning("No trade data collected for training.")
+        return
+
+    logging.info("Starting model training with collected trade data...")
+    df = pd.DataFrame(trade_data)
+    logging.info(f"Collected trade data: {df.head()}")  # Log the first few rows of collected data
+    processed_data = preprocess_data(df)
+
+    X = processed_data['features']
+    y = processed_data['labels']
+
+    if X.empty or y.empty:
+        logging.warning("Processed trade data is empty. Skipping training.")
+        return
+
+    logging.info("Splitting data into training and testing sets...")
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+    logging.info("Initializing the MLPClassifier...")
+    clf = MLPClassifier(max_iter=200)
+
+    logging.info("Fitting the model...")
+    clf.fit(X_train, y_train)
+
+    logging.info("Predicting on the test set...")
+    y_pred = clf.predict(X_test)
+    accuracy = accuracy_score(y_test, y_pred)
+    logging.info(f"Model accuracy: {accuracy}")
+
+    logging.info("Saving the trained model...")
+    save_model(clf, "IA/capybara-ai-project/models/trained_model.pkl")
+    logging.info("Model saved successfully.")
+
+def get_trade_result(trade_id):
+    # Implement logic to get the trade result (e.g., win or loss)
+    # This is a placeholder implementation
+    return 1  # Assume 1 for win and 0 for loss
+
+def collect_candles(asset, interval, count):
+    candles = IQ_Option.get_candles(asset, interval, count, time.time())
+    return candles
+
+def open_trade(asset, amount, action):
+    # Open a real trade using IQ Option API
+    logging.info(f"Opening trade for asset {asset} with amount {amount} and action {action}")
+    check, trade_id = iq.buy(amount, asset, action, 1)  # 1 represents the duration in minutes
+
+    if check:
+        logging.info(f"Trade opened successfully with trade_id: {trade_id}")
+        opening_price = iq.get_candles(asset, 60, 1, time.time())[0]['close']  # Get the opening price
+        return trade_id, opening_price
+    else:
+        logging.error("Failed to open trade")
+        return None, None
+
+def monitor_trade(trade_id, asset, data_before, indicators_before):
+    global simultaneous_trades
+    global session_profit
+    global consecutive_losses
+    global current_amount
+    global saldo_saida
+    global amount_doubled
+
+    try:
+        logging.info(f"Monitoring trade {trade_id} for asset {asset}")
+        # Collect candles during the trade
+        candles = collect_candles(asset, 60, 10)  # Collect last 10 candles with 1-minute interval
+        # Simulate getting new data for training
+        result = get_trade_result(trade_id)
+        closing_price = 1.2  # Placeholder closing price
+        collect_trade_data(trade_id, data_before['opening_price'], closing_price, result, candles)
+    except Exception as e:
+        logging.error(f"Error monitoring trade {trade_id}: {e}")
+    finally:
+        # Existing code for monitoring trade
+        pass
+
+def end_trading_session():
+    global data
+    logging.info("Ending trading session...")
+    train_model_with_collected_data()
+    on_trade_close()
+    logging.info("Trading session ended and model trained with collected data.")
 
 # Carregar credenciais do arquivo
 credentials_file = os.path.normpath(os.path.join(os.getcwd(), "credentials.txt"))
@@ -95,6 +385,26 @@ def on_message(message):
             return
         decoded_message = json.loads(message)
         logging.info(f"Mensagem decodificada: {decoded_message}")
+
+        # Extract asset and timestamp from the message
+        asset = decoded_message.get('asset')
+        timestamp = decoded_message.get('timestamp')
+
+        # Fetch candles and additional data
+        candles = fetch_candles(asset, timestamp)
+        additional_data = fetch_additional_data(asset, timestamp)
+
+        if candles and additional_data:
+            data = {
+                'asset': asset,
+                'price': decoded_message.get('price'),
+                'timestamp': timestamp,
+                'indicators': additional_data.get('indicators'),
+                'volatility': additional_data.get('volatility'),
+                'candles': candles,
+                'trade_result': decoded_message.get('trade_result')
+            }
+            store_data(data)
     except json.JSONDecodeError as e:
         logging.error(f"Erro ao decodificar mensagem JSON: {e}. Mensagem: {message}")
         # Add the asset to the ignore list
@@ -110,6 +420,12 @@ def on_message(message):
             add_asset_to_ignore_list(asset)
         return  # Ignore the asset when an unexpected error occurs
 
+def store_data(data):
+    # Store the data in a file or database for training the AI model
+    with open('trading_data.json', 'a') as f:
+        json.dump(data, f)
+        f.write('\n')
+
 def extract_asset_from_message(message):
     try:
         # Assuming the message is a JSON string and contains an 'asset' field
@@ -122,7 +438,7 @@ def extract_asset_from_message(message):
 def add_asset_to_ignore_list(asset):
     global assets_to_ignore
     assets_to_ignore.add(asset.upper())
-    log_message(f"Ativo adicionado à lista de ignorados: {asset}")
+
 
 # Exemplo de uso da função on_message
 on_message('{"key": "value"}')
@@ -182,6 +498,8 @@ def connect_to_iq_option(email, password):
         log_message(f"Erro inesperado durante a conexão: {e}")
         iq = None
     return check if 'check' in locals() else False, reason if 'reason' in locals() else "Unknown error"
+
+#
 
 # Adapted fetch_sorted_assets function
 def fetch_sorted_assets():
@@ -543,55 +861,7 @@ def should_open_trade(opening_price, closing_price, min_difference):
         return False
     return True
 
-# Carregar o modelo treinado
-model_file = "IA/capybara-ai-project/models/trained_model.pkl"
-model = load_model(model_file)
-if model is None:
-    model = MLPClassifier()
-    print(f"Novo modelo criado, pois {model_file} não foi encontrado")
-
-# Variável global para armazenar as classes
-global_classes = np.array([0, 1])
-
-# Verificar se o modelo já foi treinado anteriormente
-if hasattr(model, 'classes_'):
-    global_classes = model.classes_
-
-
-def collect_data(asset):
-    """Collect data for the last 60 minutes."""
-    data = fetch_historical_data(asset, 1, 60)
-    print(f"Dados coletados para o ativo {asset}: {data}")
-    return data
-
-def calculate_indicators(data):
-    """Calculate indicators from the collected data."""
-    macd = ta.macd(data["close"])
-    if macd is not None:
-        macd_value = macd.iloc[-1]["MACD_12_26_9"]
-    else:
-        macd_value = None
-
-    indicators = {
-        "rsi": ta.rsi(data["close"], length=14).iloc[-1] if ta.rsi(data["close"], length=14) is not None else None,
-        "macd": macd_value,
-        "ema": ta.ema(data["close"], length=20).iloc[-1] if ta.ema(data["close"], length=20) is not None else None,
-        "sma": ta.sma(data["close"], length=50).iloc[-1] if ta.sma(data["close"], length=50) is not None else None,
-        "volatility": calculate_volatility(data)
-    }
-    print(f"Indicadores calculados: {indicators}")
-    return indicators
-
-def update_model(model, X, y):
-    """Update the model with new data."""
-    global global_classes
-    log_message(f"Atualizando o modelo com X={X} e y={y}")
-    model.partial_fit(X, y, classes=global_classes)
-    joblib.dump(model, model_file)
-    log_message(f"Modelo salvo em {model_file}")
-    print(f"Modelo atualizado com X={X} e y={y}")
-    save_model(model, model_file)
-
+# Adapted execute_trades function
 def execute_trades():
     global running
     global current_amount
@@ -599,6 +869,7 @@ def execute_trades():
     global session_profit
     global simultaneous_trades
     global saldo_entrada
+    global data
 
     while running:
         log_message("Executando negociações...")
@@ -621,16 +892,19 @@ def execute_trades():
                 log_message("Número máximo de negociações simultâneas atingido. Aguardando...")
                 countdown(50)  # Adjusted countdown for 5-minute trades
                 check_trade_results()
-                update_session_profit()
+                update_session_profit()                               
                 continue
 
-            # Coletar dados dos últimos 60 minutos
-            data = collect_data(asset)
+            # Ensure results are checked periodically and reset amount if needed
+            check_trade_results()
+            update_session_profit()
             
-            # Calcular indicadores
-            indicators = calculate_indicators(data)
             
-            # Tomar decisão de compra/venda
+
+            if is_high_volatility(asset):
+                log_message(f"Alta volatilidade detectada para {asset}. Pulando ativo.")
+                continue
+
             decision = analyze_indicators(asset)
             if decision == "buy":
                 action = "call"
@@ -657,7 +931,7 @@ def execute_trades():
                     add_trade_to_list(trade_id)
                     log_message(f"Negociação realizada com sucesso para {asset}. ID da negociação={trade_id}")
                     print(f"Balance after opening trade: {iq.get_balance()}")  # Display balance after opening trade
-                    threading.Thread(target=monitor_trade, args=(trade_id, asset, indicators)).start()
+                    threading.Thread(target=monitor_trade, args=(trade_id, asset)).start()
                 else:
                     log_message(f"Falha ao realizar negociação para {asset}. Motivo: {trade_id}")  # Log the reason for failure
             except Exception as e:
@@ -665,9 +939,29 @@ def execute_trades():
                 if "WinError 10054" in str(e):
                     log_message("Conexão perdida. Tentando reconectar...")
                     reconnect_if_needed()
-                    continue
-                
-def monitor_trade(trade_id, asset, indicators):
+                    if iq and iq.check_connect():
+                        log_message("Reconexão bem-sucedida. Continuando operações.")
+                        continue
+                    else:
+                        log_message("Falha na reconexão. Parando operações.")
+                        running = False
+                        break
+
+        # Ensure results are checked periodically
+        check_trade_results()
+        update_session_profit()
+        train_model_with_collected_data(data)
+        
+
+        if smart_stop and current_amount == initial_amount:
+            running = False
+            save_console_output()
+            train_model_with_collected_data()
+            data
+            log_message("Smart Stop ativado. Parando execução após reset para valor inicial.")
+            break
+
+def monitor_trade(trade_id, asset):
     global simultaneous_trades
     global session_profit
     global consecutive_losses
@@ -689,17 +983,10 @@ def monitor_trade(trade_id, asset, indicators):
             except Exception as e:
                 print(f"Erro ao verificar status da negociação {trade_id}: {e}")
                 log_message(f"Erro ao verificar status da negociação {trade_id}: {e}")
+                time.sleep(1)
 
-        print(f"Resultado bruto da negociação {trade_id}: {result}")
-
-        # Adicione um print detalhado para inspecionar a estrutura da tupla
         if isinstance(result, tuple):
-            print(f"Estrutura da tupla de resultados: {result}")
-            for i, value in enumerate(result):
-                print(f"Elemento {i}: {value}")
-
             result = result[0]  # Assuming the first element of the tuple is the profit/loss value
-            print(f"Primeiro elemento da tupla result: {result}")
         if isinstance(result, str):
             if result.lower() == "win":
                 result = 1.0
@@ -718,18 +1005,6 @@ def monitor_trade(trade_id, asset, indicators):
 
         print(f"Resultado da negociação para {asset}: {'Vitória' if result > 0 else 'Perda'}, Lucro={result}")
         log_message(f"Resultado da negociação para {asset}: {'Vitória' if result > 0 else 'Perda'}, Lucro={result}")
-
-        # Coletar dados dos últimos 60 minutos
-        data = collect_data(asset)
-        
-        # Calcular indicadores
-        indicators = calculate_indicators(data)
-
-        # Atualizar o modelo com o resultado da negociação
-        y = [1 if result > 0 else 0]
-        X = np.array(list(indicators.values())).reshape(1, -1)
-        log_message(f"Dados para atualização do modelo: X={X}, y={y}")
-        update_model(model, X, y)
 
         update_session_profit()
 
@@ -751,6 +1026,7 @@ def monitor_trade(trade_id, asset, indicators):
             consecutive_losses = 0
             set_amount()  # Reset to initial amount after a win
             amount_doubled = False  # Reset the flag
+            print("Negociação Bem Sucedida, Restaurando Indicadores")
             log_message(f"Negociação bem-sucedida. Valor de negociação resetado para: R${current_amount}")
             update_martingale_label()  # Update Martingale label
 
@@ -776,8 +1052,10 @@ def check_trade_results():
                 if isinstance(result, str):
                     if result.lower() == "win":
                         result = 1.0
+                        train_model_with_collected_data()
                     elif result.lower() == "loose":
                         result = -1.0
+                        train_model_with_collected_data()
                     else:
                         try:
                             result = float(result)  # Convert string to float
@@ -788,18 +1066,6 @@ def check_trade_results():
 
                 session_profit += result
                 log_message(f"Resultado da negociação {trade_id}: {'Vitória' if result > 0 else 'Perda'}, Lucro={result}")
-                # Coletar dados dos últimos 60 minutos
-                asset = iq.get_asset_by_id(trade_id)  # Get the asset for this trade
-                data = collect_data(asset)
-                
-                # Calcular indicadores
-                indicators = calculate_indicators(data)
-                
-                # Atualizar o modelo com o resultado da negociação
-                y = [1 if result > 0 else 0]
-                X = np.array(list(indicators.values())).reshape(1, -1)
-                log_message(f"Dados para atualização do modelo: X={X}, y={y}")
-                update_model(model, X, y)
 
                 if result <= 0:
                     consecutive_losses += 1
@@ -857,18 +1123,15 @@ def update_log():
         root.after(1000, update_log)
 
 # Update the set_amount function to use 5% of the account balance
-def set_amount(amount=None):
+def set_amount():
     global initial_amount
     global current_amount
-    if amount is not None:
-        current_amount = amount
-    else:
-        balance = iq.get_balance()
-        initial_amount = balance * 0.02  # Set to 2% of the balance
-        current_amount = initial_amount
-        log_message(f"Initial amount set to 2% of balance: R${initial_amount:.2f}")
-        balance_label.config(text=f"Balance: R${balance:.2f}")
-        update_martingale_label()  # Update Martingale label
+    balance = iq.get_balance()
+    initial_amount = balance * 0.02  # Set to 2% of the balance
+    current_amount = initial_amount
+    log_message(f"Initial amount set to 2% of balance: R${initial_amount:.2f}")
+    balance_label.config(text=f"Balance: R${balance:.2f}")
+    update_martingale_label()  # Update Martingale label
 
 # Function to update the Martingale label
 def update_martingale_label():
@@ -896,7 +1159,7 @@ threading.Thread(target=watchdog, daemon=True).start()
 
 # GUI Configuration
 root = tk.Tk()
-root.title(f"Capybara AI v0.6 - Conta: {account_type} - {email}")
+root.title(f"Capybara v7.7 - Conta: {account_type} - {email}")
 root.configure(bg="#000000")
 
 static_icon = PhotoImage(file="static_icon.png")
@@ -1072,7 +1335,7 @@ invalid_credentials = False
 if invalid_credentials:
     log_text.insert(tk.END, "Invalid credentials. Please check the credentials.txt file.\n")
 
-
+root.mainloop()
 
 def calculate_success_probability(asset, direction):
     """
@@ -1144,5 +1407,42 @@ connect_to_iq_option(email, password)
 set_amount()
 update_balance()  # Start the periodic balance update
 
-root.mainloop()
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 

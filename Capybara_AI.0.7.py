@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-# Arquivo: Capybara_AI.0.6.py
+# Arquivo: Capybara_AI.0.7.py
 #PECUNIA IMPROMPTA
 #Código construido com Copilot e otimizado utilizando DeepSeek, o ChatGPT de flango.
 from iqoptionapi.stable_api import IQ_Option
@@ -37,6 +37,175 @@ import numpy as np
 from sklearn.neural_network import MLPClassifier
 from model_management import load_model, save_model
 
+# Carregar o modelo de machine learning
+model_path = os.path.normpath(os.path.join(os.getcwd(), "IA/capybara-ai-project/models/trained_model.pkl"))
+model = joblib.load(model_path)
+
+def get_data_for_model(asset):
+    # Coletar dados reais de volatilidade, indicadores e candles
+    data = fetch_historical_data(asset, 1, 60)  # Fetch last 60 candles of 1 minute each
+    if data.empty:
+        raise ValueError(f"No data returned for asset {asset}")
+    
+    # Garantir que todas as funções retornem arrays NumPy
+    try:
+        volatility = np.array(calculate_volatility(data)).reshape(1, -1)  # Função que retorna os dados de volatilidade
+    except Exception as e:
+        log_message(f"Erro ao calcular volatilidade para o ativo {asset}: {e}")
+        raise
+
+    try:
+        indicators = calculate_indicators(data)
+        log_message(f"Indicadores calculados para o ativo {asset}: {indicators}")
+        indicators = np.array([float(value) for value in indicators.values()]).reshape(1, -1)  # Função que retorna os dados de indicadores
+    except Exception as e:
+        log_message(f"Erro ao calcular indicadores para o ativo {asset}: {e}")
+        raise
+
+    try:
+        candles = np.array(fetch_candles(asset, 60, 60)).reshape(1, -1)  # Função que retorna os dados de candles
+    except Exception as e:
+        log_message(f"Erro ao buscar candles para o ativo {asset}: {e}")
+        raise
+    
+    # Combine os dados em um único array
+    try:
+        combined_data = np.concatenate((volatility, indicators, candles), axis=1)
+    except Exception as e:
+        log_message(f"Erro ao combinar dados para o ativo {asset}: {e}")
+        raise
+    
+    # Verifique o tamanho dos dados e ajuste se necessário
+    expected_features = 82
+    if combined_data.shape[1] != expected_features:
+        log_message(f"Warning: Expected {expected_features} features, but got {combined_data.shape[1]}")
+    
+    return combined_data
+
+def make_decision(asset):
+    try:
+        data = get_data_for_model(asset)
+        decision = model.predict(data)
+        return decision[0]  # Assuming the model returns an array, get the first element
+    except Exception as e:
+        log_message(f"Erro ao tomar decisão para o ativo {asset}: {e}")
+        raise
+
+def save_model():
+    joblib.dump(model, model_path)
+    log_message("Model saved successfully.")
+
+
+
+def fetch_candles(asset, interval, count):
+    """Obtém os candles do ativo na IQ Option API, garantindo que a conexão esteja ativa."""
+    global iq
+    if iq is None or not iq.check_connect():
+        log_message("API desconectada. Tentando reconectar...")
+        connect_to_iq_option(email, password)
+
+        if iq is None or not iq.check_connect():
+            log_message("Falha na reconexão. Não foi possível buscar candles.")
+            return []
+
+    try:
+        candles = iq.get_candles(asset, interval, count, time.time())
+        return [candle['close'] for candle in candles]
+    except Exception as e:
+        log_message(f"Erro ao buscar candles para {asset}: {e}")
+        return []
+
+
+
+def fetch_additional_data(asset, timestamp):
+    """Obtém dados adicionais, como indicadores técnicos e volatilidade."""
+    candles = fetch_candles(asset, 60, 60)  # Obtém os últimos 60 candles de 1 minuto
+    if not candles:
+        return None
+
+    close_prices = [candle['close'] for candle in candles]
+    high_prices = [candle['max'] for candle in candles]
+    low_prices = [candle['min'] for candle in candles]
+    volume = [candle['volume'] for candle in candles]
+
+    indicators = {
+        'rsi': pyti_rsi(close_prices, period=14)[-1],
+        'macd': pyti_macd(close_prices, short_period=12, long_period=26, signal_period=9)[-1],
+        'sma': pyti_sma(close_prices, period=14)[-1],
+        'ema': pyti_ema(close_prices, period=14)[-1],
+        'bollinger': pyti_bollinger(close_prices, period=20)[-1],
+        'atr': pyti_atr(high_prices, low_prices, close_prices, period=14)[-1],
+        'stochastic': pyti_stochastic(close_prices, high_prices, low_prices, period=14)[-1],
+        'willr': pyti_willr(close_prices, high_prices, low_prices, period=14)[-1],
+        'cci': pyti_cci(close_prices, high_prices, low_prices, period=14)[-1],
+        'roc': pyti_roc(close_prices, period=14)[-1],
+        'obv': pyti_obv(close_prices, volume)[-1],
+        'mfi': pyti_mfi(close_prices, high_prices, low_prices, volume, period=14)[-1],
+        'dpo': pyti_dpo(close_prices, period=14)[-1],
+        'ultimate': pyti_ultimate(close_prices, high_prices, low_prices, period1=7, period2=14, period3=28)[-1],
+        'aroon_up': pyti_aroon_up(close_prices, period=14)[-1],
+        'aroon_down': pyti_aroon_down(close_prices, period=14)[-1]
+    }
+
+    volatility = calculate_volatility(close_prices)
+
+    return {
+        'indicators': indicators,
+        'volatility': volatility
+    }
+
+
+def set_amount(amount=None):
+    """Define o valor da negociação como 2% do saldo ou um valor especificado."""
+    global initial_amount, current_amount, iq
+    if amount is not None:
+        current_amount = amount
+    else:
+        if iq is None or not iq.check_connect():
+            log_message("API desconectada. Não foi possível definir o valor da negociação.")
+            return
+        balance = iq.get_balance()
+        initial_amount = balance * 0.02  # Define 2% do saldo
+        current_amount = initial_amount
+        log_message(f"Valor inicial definido: R${initial_amount:.2f}")
+
+def calculate_volatility(data):
+    # Exemplo de cálculo de volatilidade
+    return [np.std(data['close'])]
+
+
+def on_trade_open(asset, timestamp):
+    """Obtém os candles e dados adicionais quando uma negociação é aberta."""
+    candles = fetch_candles(asset, 60, 60)  # Agora fornecendo todos os argumentos necessários
+    additional_data = fetch_additional_data(asset, timestamp)
+    
+    return {
+        'candles': candles,
+        'additional_data': additional_data
+    }
+
+def on_trade_open(asset, timestamp):
+    """Obtém os candles e dados adicionais ao abrir uma negociação."""
+    candles = fetch_candles(asset, 60, 60)  # Agora fornecendo todos os argumentos necessários
+    additional_data = fetch_additional_data(asset, timestamp)
+
+    if additional_data is None:
+        log_message(f"Erro ao obter dados adicionais para {asset}. Retornando apenas candles.")
+        return {'candles': candles}  # Retorna apenas candles se os dados adicionais falharem
+
+    return {
+        'candles': candles,
+        'volatility': additional_data.get('volatility', None),
+        'indicators': additional_data.get('indicators', {})
+    }
+
+
+
+def store_data(data):
+    # Store the data in a file or database for training the AI model
+    with open('trading_data.json', 'a') as f:
+        json.dump(data, f)
+        f.write('\n')
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -149,7 +318,7 @@ trade_list = []
 saldo_entrada = 0  # Saldo na hora de começar uma operação
 saldo_saida = 0  # Saldo no fim da operação
 amount_doubled = False  # Flag to track if the amount has been doubled
-
+asset = "AssetName"  # Nome do ativo para negociação
 # Define preset trade value
 auto_initial_amount = 2
 smart_stop = False
@@ -161,27 +330,25 @@ def print_account_balance():
 
 # Conectar à API IQ Option
 def connect_to_iq_option(email, password):
+    """Conecta à API IQ Option e configura a conta."""
     global iq
     log_message("Tentando conectar à API IQ Option...")
     iq = IQ_Option(email, password)
+    
     try:
         check, reason = iq.connect()
         if check:
             iq.change_balance(account_type)  # Alternar entre 'PRACTICE' e 'REAL'
             log_message("Conexão bem-sucedida com a API IQ Option.")
             set_amount()  # Definir o valor inicial da negociação
-            print_account_balance()  # Print account balance after successful connection
-            update_session_profit()  # Update session profit after successful connection
         else:
             log_message(f"Falha ao conectar à API IQ Option: {reason}")
-            iq = None  # Garantir que iq seja None se a conexão falhar
-    except json.JSONDecodeError as e:
-        log_message(f"Erro ao decodificar JSON durante a conexão: {e}")
-        iq = None
+            iq = None  # Garante que iq seja None se a conexão falhar
     except Exception as e:
         log_message(f"Erro inesperado durante a conexão: {e}")
         iq = None
-    return check if 'check' in locals() else False, reason if 'reason' in locals() else "Unknown error"
+    return check if 'check' in locals() else False, reason if 'reason' in locals() else "Erro desconhecido"
+
 
 # Adapted fetch_sorted_assets function
 def fetch_sorted_assets():
@@ -240,18 +407,20 @@ def reconnect_if_needed():
                 running = True
                 threading.Thread(target=execute_trades).start()  # Restart trading if it was stopped
 
-def fetch_historical_data(asset, duration, candle_count):
-    reconnect_if_needed()
-    if iq is None:
-        log_message(f"API desconectada. Não é possível buscar dados históricos para {asset}.")
-        return pd.DataFrame()  # Return an empty DataFrame if disconnected
-    candles = iq.get_candles(asset, duration * 60, candle_count, time.time())
+def fetch_historical_data(asset, interval, count):
+    # Implementar a lógica para buscar dados históricos
+    # Certifique-se de que o DataFrame retornado contenha a coluna 'close'
+    candles = iq.get_candles(asset, interval, count, time.time())
+    if not candles:
+        raise ValueError(f"No data returned for asset {asset}")
+
+    # Convert the list of candles to a DataFrame
     df = pd.DataFrame(candles)
+    if 'close' not in df.columns:
+        raise KeyError(f"'close' column not found in data for asset {asset}")
     df["close"] = df["close"].astype(float)
-    df["open"] = df["open"].astype(float)
-    df["high"] = df["max"].astype(float)
-    df["low"] = df["min"].astype(float)
     return df
+
 
 # Função para reconectar à API
 def reconnect():
@@ -331,175 +500,95 @@ def analyze_trend(asset):
     else:
         return "neutral"
 
-def analyze_indicators(asset):
-    if ignore_assets(asset):
-        log_message(f"Ignorando ativo {asset}.")
-        return None
-
-    trend = analyze_trend(asset)
-    if trend == "neutral":
-        log_message(f"Mercado lateralizado para {asset}. Pulando ativo.")
-        return None
-
-    log_message(f"Analisando indicadores para {asset}...")
+volatility = on_trade_open(asset, int(time.time()))['volatility']
+if volatility is not None:
+    indicators = {'volatility': volatility}
+    
     try:
-        data = fetch_historical_data(asset, 1, 100)
-
-        if data is None or data.empty:
-            log_message(f"Sem dados suficientes para {asset}. Pulando ativo.")
-            return None
-
-        # Ensure all columns are cast to compatible dtypes
-        data["close"] = data["close"].astype(float)
-        data["open"] = data["open"].astype(float)
-        data["high"] = data["high"].astype(float)
-        data["low"] = data["low"].astype(float)
-        if "volume" in data.columns:
-            data["volume"] = data["volume"].astype(float)
-
-        indicators = {}
-        available_indicators = {
-            "rsi": lambda: ta.rsi(data["close"], length=14),
-            "macd": lambda: ta.macd(data["close"])["MACD_12_26_9"],
-            "ema": lambda: ta.ema(data["close"], length=9),
-            "sma": lambda: ta.sma(data["close"], length=20),
-            "stochastic": lambda: ta.stoch(data["high"], data["low"], data["close"])["STOCHk_14_3_3"],
-            "atr": lambda: ta.atr(data["high"], data["low"], data["close"], length=14),
-            "adx": lambda: ta.adx(data["high"], data["low"], data["close"], length=14),
-            "bollinger_high": lambda: ta.bbands(data["close"])["BBU_20_2.0"] if "BBU_20_2.0" in ta.bbands(data["close"]) else None,
-            "bollinger_low": lambda: ta.bbands(data["close"])["BBL_20_2.0"] if "BBL_20_2.0" in ta.bbands(data["close"]) else None,
-            "cci": lambda: ta.cci(data["high"], data["low"], data["close"], length=20),
-            "willr": lambda: ta.willr(data["high"], data["low"], data["close"], length=14),
-            "roc": lambda: ta.roc(data["close"], length=12),
-            "obv": lambda: ta.obv(data["close"], data["volume"]),
-            "trix": lambda: ta.trix(data["close"], length=15),
-            "mfi": lambda: ta.mfi(data["high"], data["low"], data["close"], data["volume"], length=14).astype(float),
-            "dpo": lambda: ta.dpo(data["close"], length=14),
-            "keltner_upper": lambda: ta.kc(data["high"], data["low"], data["close"], length=20)["KCUp_20_2.1"] if "KCUp_20_2.1" in ta.kc(data["high"], data["low"], data["close"], length=20) else None,
-            "keltner_lower": lambda: ta.kc(data["high"], data["low"], data["close"], length=20)["KCLo_20_2.1"] if "KCLo_20_2.1" in ta.kc(data["high"], data["low"], data["close"], length=20) else None,
-            "ultimate_oscillator": lambda: ta.uo(data["high"], data["low"], data["close"]),
-            "tsi": lambda: ta.tsi(data["close"]),
-            "aroon_up": lambda: ta.aroon(data["high"], data["low"], length=25)["AROONU_25"],
-            "aroon_down": lambda: ta.aroon(data["high"], data["low"], length=25)["AROOND_25"],
-            "last_candles": lambda: analyze_last_candles(data),
-        }
-
-        for key, func in available_indicators.items():
-            try:
-                with warnings.catch_warnings():
-                    warnings.filterwarnings("error", category=FutureWarning)
-                    result = func()
-                    if result is not None and not isinstance(result, str) and not result.empty:
-                        indicators[key] = result.iloc[-1] if isinstance(result, pd.Series) else result
-            except FutureWarning as fw:
-                log_message(f"FutureWarning ao calcular {key.upper()} para {asset}: {fw}. Pulando indicador.")
-                indicators[key] = None
-            except Exception as e:
-                log_message(f"Erro ao calcular {key.upper()} para {asset}: {e}")
-                indicators[key] = None
-
-        decisions = []
-
-        if indicators.get("rsi") is not None:
-            if indicators["rsi"] < 30:
-                decisions.append("buy")
-            elif indicators["rsi"] > 70:
-                decisions.append("sell")
-
-        if indicators.get("macd") is not None:
-            if indicators["macd"] > 0:
-                decisions.append("buy")
-            elif indicators["macd"] < 0:
-                decisions.append("sell")
-
-        if indicators.get("ema") is not None:
-            if data["close"].iloc[-1] > indicators["ema"] and trend == "up":
-                decisions.append("buy")
-            elif data["close"].iloc[-1] < indicators["ema"] and trend == "down":
-                decisions.append("sell")
-
-        if indicators.get("sma") is not None:
-            if data["close"].iloc[-1] > indicators["sma"] and trend == "up":
-                decisions.append("buy")
-            elif data["close"].iloc[-1] < indicators["sma"] and trend == "down":
-                decisions.append("sell")
-
-        if indicators.get("stochastic") is not None:
-            if indicators["stochastic"] < 20:
-                decisions.append("buy")
-            elif indicators["stochastic"] > 80:
-                decisions.append("sell")
-
-        if indicators.get("bollinger_low") is not None and indicators.get("bollinger_high") is not None:
-            if data["close"].iloc[-1] < indicators["bollinger_low"]:
-                decisions.append("buy")
-            elif data["close"].iloc[-1] > indicators["bollinger_high"]:
-                decisions.append("sell")
-
-        if indicators.get("cci") is not None:
-            if indicators["cci"] < -100:
-                decisions.append("buy")
-            elif indicators["cci"] > 100:
-                decisions.append("sell")
-
-        if indicators.get("willr") is not None:
-            if indicators["willr"] < -80:
-                decisions.append("buy")
-            elif indicators["willr"] > -20:
-                decisions.append("sell")
-
-        if indicators.get("roc") is not None:
-            if indicators["roc"] > 0:
-                decisions.append("buy")
-            else:
-                decisions.append("sell")
-
-        if indicators.get("mfi") is not None:
-            if indicators["mfi"] < 20:
-                decisions.append("buy")
-            elif indicators["mfi"] > 80:
-                decisions.append("sell")
-
-        if indicators.get("aroon_up") is not None and indicators.get("aroon_down") is not None:
-            if indicators["aroon_up"] > 70:
-                decisions.append("buy")
-            if indicators["aroon_down"] > 70:
-                decisions.append("sell")
-
-        if indicators.get("last_candles") is not None:
-            if indicators["last_candles"] == "up":
-                decisions.append("buy")
-            elif indicators["last_candles"] == "down":
-                decisions.append("sell")
-
-        buy_votes = decisions.count("buy")
-        sell_votes = decisions.count("sell")
-        total_votes = buy_votes + sell_votes
-
-        log_message(f"Votação de indicadores para {asset}: BUY={buy_votes}, SELL={sell_votes}")
-        log_message(f"Decisões: {decisions}")
-
-        if total_votes == 0:
-            log_message("Nenhum voto válido. Pulando ativo.")
-            return None
-
-        majority = (total_votes // 2) + 2  # Update majority to 50%+2
-
-        if consecutive_losses >= 2:  # Invert votes starting from the third Martingale
-            print("Terceiro Martingale - Invertendo indicadores")
-            buy_votes, sell_votes = sell_votes, buy_votes
-
-        if buy_votes >= majority:
-            return "buy"
-        elif sell_votes >= majority:
-            return "sell"
-        else:
-            log_message("Consenso insuficiente entre os indicadores. Pulando ativo.")
-            return None
-
+        decision = model.predict(indicators)
+        
+        if decision == 1:  # Assuming the model predicts buy
+            log_message(f"Trade decided to buy based on {indicators}")
+        elif decision == 0:  # Assuming the model predicts sell
+            log_message(f"Trade decided to sell based on {indicators}")
     except Exception as e:
-        log_message(f"Erro ao analisar indicadores para {asset}: {e}")
-        return None
+        log_message(f"Error making decision: {e}")
+
+
+class CustomIndicator:
+    def __init__(self, instrument, last_data, parameters):
+        self.instrument = instrument
+        self.last = last_data.copy()
+        self.parameters = parameters
+        self.last_data = last_data
+
+    def is_enabled(self):
+        try:
+            candles = fetch_historical_data(self.instrument, 1, 60)
+            if candles is not None and not candles.empty:
+                return True
+        except Exception as e:
+            log_message(f"Error fetching data for {self.instrument}: {e}")
+            return False
+        return False
+
+    def calculate_volatility(self, data):
+        # Implemente seu cálculo de volatilidade aqui
+        return 0.0  # Valor de retorno de exemplo
+
+    def on_trade_open(self, timestamp):
+        try:
+            data = fetch_historical_data(self.instrument, 1, 60)  # Fetch últimos 60 candles de 1 minuto cada
+            if data is not None and not data.empty:
+                volatility = self.calculate_volatility(data)
+                return {'volatility': volatility}
+            else:
+                log_message(f"Error fetching historical data for {self.instrument}")
+                return None
+        except Exception as e:
+            log_message(f"Error processing trade open: {e}")
+            return None
+
+    def on_trade_close(self, trade_result, trade_value, timestamp):
+        try:
+            data = fetch_historical_data(self.instrument, 1, 60)  # Fetch últimos 60 candles de 1 minuto cada
+            if data is not None and not data.empty:
+                volatility = self.calculate_volatility(data)
+                return {'volatility': volatility}
+            else:
+                log_message(f"Error fetching historical data for {self.instrument}")
+                return None
+        except Exception as e:
+            log_message(f"Error processing trade close: {e}")
+            return None
+
+    def make_decision(self, indicators):
+        try:
+            decision = model.predict(indicators)
+            return decision
+        except Exception as e:
+            log_message(f"Error making decision: {e}")
+            return None
+
+# # Exemplo de uso:
+# instrument = "EURUSD"
+# current_data = {
+#     'last': data,
+#     'parameters': None
+# }
+# indicator = CustomIndicator(instrument, current_data, {'last': data, 'parameters': None})
+
+# if indicator.is_enabled():
+#     decision = indicator.make_decision({'volatility': indicator.on_trade_open(int(time.time()))['volatility']})
+#     if decision == 1:  # Supondo que 1 significa comprar
+#         log_message(f"Decision: Buy {instrument}")
+#         # Execute a lógica de compra aqui
+#     elif decision == 0:  # Supondo que 0 significa vender
+#         log_message(f"Decision: Sell {instrument}")
+#         # Execute a lógica de venda aqui
+
+#     # Execute a lógica de fechamento de negociação aqui
+#     indicator.on_trade_close(trade_result, trade_value, int(time.time()))
 
 def countdown(seconds):
     while seconds > 0:
@@ -544,8 +633,8 @@ def should_open_trade(opening_price, closing_price, min_difference):
     return True
 
 # Carregar o modelo treinado
-model_file = "IA/capybara-ai-project/models/trained_model.pkl"
-model = load_model(model_file)
+model = joblib.load('IA/capybara-ai-project/models/trained_model.pkl')
+model_file = 'IA/capybara-ai-project/models/trained_model.pkl'
 if model is None:
     model = MLPClassifier()
     print(f"Novo modelo criado, pois {model_file} não foi encontrado")
@@ -563,24 +652,49 @@ def collect_data(asset):
     data = fetch_historical_data(asset, 1, 60)
     print(f"Dados coletados para o ativo {asset}: {data}")
     return data
-
+import ta
 def calculate_indicators(data):
-    """Calculate indicators from the collected data."""
-    macd = ta.macd(data["close"])
-    if macd is not None:
-        macd_value = macd.iloc[-1]["MACD_12_26_9"]
-    else:
-        macd_value = None
+    # Exemplo de cálculo de indicadores
+    try:
+        # Check if required columns are present
+        required_columns = ["high", "low", "close", "volume"]
+        for col in required_columns:
+            if col not in data.columns:
+                raise ValueError(f"Missing required column: {col}")
 
-    indicators = {
-        "rsi": ta.rsi(data["close"], length=14).iloc[-1] if ta.rsi(data["close"], length=14) is not None else None,
-        "macd": macd_value,
-        "ema": ta.ema(data["close"], length=20).iloc[-1] if ta.ema(data["close"], length=20) is not None else None,
-        "sma": ta.sma(data["close"], length=50).iloc[-1] if ta.sma(data["close"], length=50) is not None else None,
-        "volatility": calculate_volatility(data)
-    }
-    print(f"Indicadores calculados: {indicators}")
-    return indicators
+        # Check for NaN or null values
+        if data[required_columns].isnull().values.any():
+            raise ValueError("Input data contains NaN or null values")
+
+        indicators = {
+            "rsi": ta.momentum.RSIIndicator(data["close"], window=14).rsi().iloc[-1],
+            "macd": ta.trend.MACD(data["close"]).macd().iloc[-1],
+            "ema": ta.trend.EMAIndicator(data["close"], window=9).ema_indicator().iloc[-1],
+            "sma": ta.trend.SMAIndicator(data["close"], window=20).sma_indicator().iloc[-1],
+            "stochastic": ta.momentum.StochasticOscillator(data["high"], data["low"], data["close"]).stoch().iloc[-1],
+            "atr": ta.volatility.AverageTrueRange(data["high"], data["low"], data["close"], window=14).average_true_range().iloc[-1],
+            "adx": ta.trend.ADXIndicator(data["high"], data["low"], data["close"], window=14).adx().iloc[-1],
+            "bollinger_high": ta.volatility.BollingerBands(data["close"]).bollinger_hband().iloc[-1],
+            "bollinger_low": ta.volatility.BollingerBands(data["close"]).bollinger_lband().iloc[-1],
+            "cci": ta.trend.CCIIndicator(data["high"], data["low"], data["close"], window=20).cci().iloc[-1],
+            "willr": ta.momentum.WilliamsRIndicator(data["high"], data["low"], data["close"], lbp=14).williams_r().iloc[-1],
+            "roc": ta.momentum.ROCIndicator(data["close"], window=12).roc().iloc[-1],
+            "obv": ta.volume.OnBalanceVolumeIndicator(data["close"], data["volume"]).on_balance_volume().iloc[-1],
+            "trix": ta.trend.TRIXIndicator(data["close"], window=15).trix().iloc[-1],
+            "mfi": ta.volume.MFIIndicator(data["high"], data["low"], data["close"], data["volume"], window=14).money_flow_index().iloc[-1],
+            "dpo": ta.trend.DPOIndicator(data["close"], window=14).dpo().iloc[-1],
+            "keltner_upper": ta.volatility.KeltnerChannel(data["high"], data["low"], data["close"]).keltner_channel_hband().iloc[-1],
+            "keltner_lower": ta.volatility.KeltnerChannel(data["high"], data["low"], data["close"]).keltner_channel_lband().iloc[-1],
+            "ultimate_oscillator": ta.momentum.UltimateOscillator(data["high"], data["low"], data["close"]).ultimate_oscillator().iloc[-1],
+            "tsi": ta.momentum.TSIIndicator(data["close"]).tsi().iloc[-1],
+            "aroon_up": ta.trend.AroonIndicator(data["close"]).aroon_up().iloc[-1],
+            "aroon_down": ta.trend.AroonIndicator(data["close"]).aroon_down().iloc[-1]
+        }
+        return indicators
+    except Exception as e:
+        log_message(f"Erro ao calcular indicadores: {e}")
+        log_message(f"Input data:\n{data}")
+        raise
 
 def update_model(model, X, y):
     """Update the model with new data."""
@@ -591,6 +705,51 @@ def update_model(model, X, y):
     log_message(f"Modelo salvo em {model_file}")
     print(f"Modelo atualizado com X={X} e y={y}")
     save_model(model, model_file)
+
+def execute_trade(decision, asset, indicators):
+    global current_amount
+    global simultaneous_trades
+    global saldo_entrada
+
+    if decision == "buy":
+        action = "call"
+        log_message("Executing BUY trade...")
+    elif decision == "sell":
+        action = "put"
+        log_message("Executing SELL trade...")
+    else:
+        log_message(f"Pulando negociação para {asset}. Sem consenso ou tendência contrária.")
+        return
+
+    log_message(f"Tentando realizar negociação: Ativo={asset}, Ação={action}, Valor = R${current_amount}")
+    saldo_entrada = iq.get_balance()  # Store balance before trade
+    print(f"Balance before opening trade: {saldo_entrada}")  # Display balance before trade
+
+    # Verificar a disponibilidade do ativo antes de tentar negociar
+    available_assets = iq.get_all_ACTIVES_OPCODE()
+    if asset not in available_assets:
+        log_message(f"Ativo {asset} não encontrado na plataforma. Pulando ativo.")
+        return
+
+    try:
+        success, trade_id = iq.buy(current_amount, asset, action, 5)  # Negociações de 5 minutos
+        if success:
+            simultaneous_trades += 1
+            add_trade_to_list(trade_id)
+            log_message(f"Negociação realizada com sucesso para {asset}. ID da negociação={trade_id}")
+            print(f"Balance after opening trade: {iq.get_balance()}")  # Display balance after opening trade
+            threading.Thread(target=monitor_trade, args=(trade_id, asset, indicators)).start()
+        else:
+            log_message(f"Falha ao realizar negociação para {asset}. Motivo: {trade_id}")  # Log the reason for failure
+    except Exception as e:
+        log_message(f"Erro durante a execução da negociação para {asset}: {e}")
+        if "WinError 10054" in str(e):
+            log_message("Conexão perdida. Tentando reconectar...")
+            reconnect_if_needed()
+            return
+
+# Carregar o modelo de machine learning
+model = joblib.load('IA/capybara-ai-project/models/trained_model.pkl')
 
 def execute_trades():
     global running
@@ -624,48 +783,20 @@ def execute_trades():
                 update_session_profit()
                 continue
 
-            # Coletar dados dos últimos 60 minutos
-            data = collect_data(asset)
-            
-            # Calcular indicadores
-            indicators = calculate_indicators(data)
-            
-            # Tomar decisão de compra/venda
-            decision = analyze_indicators(asset)
-            if decision == "buy":
-                action = "call"
-            elif decision == "sell":
-                action = "put"
-            else:
-                log_message(f"Pulando negociação para {asset}. Sem consenso ou tendência contrária.")
-                continue
-
-            log_message(f"Tentando realizar negociação: Ativo={asset}, Ação={action}, Valor = R${current_amount}")
-            saldo_entrada = iq.get_balance()  # Store balance before trade
-            print(f"Balance before opening trade: {saldo_entrada}")  # Display balance before trade
-
-            # Verificar a disponibilidade do ativo antes de tentar negociar
-            available_assets = iq.get_all_ACTIVES_OPCODE()
-            if asset not in available_assets:
-                log_message(f"Ativo {asset} não encontrado na plataforma. Pulando ativo.")
-                continue
-
             try:
-                success, trade_id = iq.buy(current_amount, asset, action, 5)  # Negociações de 5 minutos
-                if success:
-                    simultaneous_trades += 1
-                    add_trade_to_list(trade_id)
-                    log_message(f"Negociação realizada com sucesso para {asset}. ID da negociação={trade_id}")
-                    print(f"Balance after opening trade: {iq.get_balance()}")  # Display balance after opening trade
-                    threading.Thread(target=monitor_trade, args=(trade_id, asset, indicators)).start()
-                else:
-                    log_message(f"Falha ao realizar negociação para {asset}. Motivo: {trade_id}")  # Log the reason for failure
+                decision = make_decision(asset)
+                if decision == 1:  # Assuming 1 means buy
+                    log_message(f"Decision: Buy {asset}")
+                    # Execute buy logic here
+                elif decision == 0:  # Assuming 0 means sell
+                    log_message(f"Decision: Sell {asset}")
+                    # Execute sell logic here
+
+                save_model()  # Save the model after each decision
             except Exception as e:
-                log_message(f"Erro durante a execução da negociação para {asset}: {e}")
-                if "WinError 10054" in str(e):
-                    log_message("Conexão perdida. Tentando reconectar...")
-                    reconnect_if_needed()
-                    continue
+                log_message(f"Erro ao processar o ativo {asset}: {e}")
+
+    # Implementação da função monitor_trade
                 
 def monitor_trade(trade_id, asset, indicators):
     global simultaneous_trades
@@ -856,19 +987,7 @@ def update_log():
     if running:
         root.after(1000, update_log)
 
-# Update the set_amount function to use 5% of the account balance
-def set_amount(amount=None):
-    global initial_amount
-    global current_amount
-    if amount is not None:
-        current_amount = amount
-    else:
-        balance = iq.get_balance()
-        initial_amount = balance * 0.02  # Set to 2% of the balance
-        current_amount = initial_amount
-        log_message(f"Initial amount set to 2% of balance: R${initial_amount:.2f}")
-        balance_label.config(text=f"Balance: R${balance:.2f}")
-        update_martingale_label()  # Update Martingale label
+
 
 # Function to update the Martingale label
 def update_martingale_label():
@@ -877,26 +996,37 @@ def update_martingale_label():
     else:
         martingale_label.config(text="M", fg="#000000")  # Same color as the background
 
-# Function to stop and start trading if the code freezes for more than 15 seconds
+# Carregar o modelo de machine learning
+model = joblib.load('IA/capybara-ai-project/models/trained_model.pkl')
+
+def update_model_with_results(results):
+    # Função para retroalimentar o modelo com os dados de resultado
+    # Substitua isso com a lógica para atualizar o modelo
+    pass
+
+
+# Modificar a função watchdog para incluir a lógica de decisão e negociação
 def watchdog():
-    global running
-    last_check = time.time()
-    
     while True:
-        time.sleep(5)
-        if running and (time.time() - last_check > 15):
-            log_message("Detected freeze. Restarting trading session...")
-            stop_trading()
-            time.sleep(1)
-            start_trading()
-        last_check = time.time()
+        try:
+            assets = fetch_sorted_assets()
+            for asset in assets:
+                try:
+                    decision = make_decision(asset)
+                    # Process the decision
+                except Exception as e:
+                    log_message(f"Erro ao processar o ativo {asset}: {e}")
+        except Exception as e:
+            log_message(f"Erro no watchdog: {e}")
+            break
+
 
 # Start the watchdog thread
 threading.Thread(target=watchdog, daemon=True).start()
 
 # GUI Configuration
 root = tk.Tk()
-root.title(f"Capybara AI v0.6 - Conta: {account_type} - {email}")
+root.title(f"Capybara AI v0.7 - Conta: {account_type} - {email}")
 root.configure(bg="#000000")
 
 static_icon = PhotoImage(file="static_icon.png")

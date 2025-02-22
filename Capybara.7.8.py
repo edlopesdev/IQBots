@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-# Arquivo: Capybara_AI.0.6.py
+# Arquivo: Capybara.7.8.py
 #PECUNIA IMPROMPTA
 #Código construido com Copilot e otimizado utilizando DeepSeek, o ChatGPT de flango.
 from iqoptionapi.stable_api import IQ_Option
@@ -11,9 +11,12 @@ from tkinter.scrolledtext import ScrolledText
 from tkinter import PhotoImage
 import pandas as pd
 import pandas_ta as ta
+import numpy as np
 import json
 import logging
 import warnings
+from sklearn.ensemble import RandomForestClassifier
+import joblib
 import sys
 import yfinance as yf  # Import yfinance library
 from pyti.relative_strength_index import relative_strength_index as pyti_rsi
@@ -32,11 +35,152 @@ from pyti.detrended_price_oscillator import detrended_price_oscillator as pyti_d
 from pyti.ultimate_oscillator import ultimate_oscillator as pyti_ultimate
 from pyti.aroon import aroon_up as pyti_aroon_up, aroon_down as pyti_aroon_down
 from trading_strategy import should_open_trade, should_abandon_trade, calculate_success_probability, should_enter_trade
-import joblib
-import numpy as np
-from sklearn.neural_network import MLPClassifier
-from model_management import load_model, save_model
 
+data_file = "trading_data.csv"
+model_file = "trading_model.pkl"
+
+
+
+# Função para capturar os últimos 60 candles de 1 minuto
+def fetch_candles(asset):
+    data = fetch_historical_data(asset, 1, 60)  # Obtém os últimos 60 candles
+    if data is None or data.empty:
+        return None
+    return data[['open', 'high', 'low', 'close', 'volume']].values  # Retorna os dados formatados
+
+
+# Função para recriar o arquivo CSV corretamente
+def recreate_csv():
+    column_names = [f"feature_{i}" for i in range(300)] + ["target"]  # Ajuste para 300 features
+    pd.DataFrame(columns=column_names).to_csv(data_file, index=False)
+    log_message("Novo arquivo CSV criado com estrutura correta.")
+
+
+# Função para recriar o modelo caso esteja corrompido
+def load_or_train_model():
+    if not validate_csv():
+        return None
+    
+    if os.path.exists(model_file):
+        attempts = 3
+        for attempt in range(attempts):
+            try:
+                model = joblib.load(model_file)
+                if not isinstance(model, RandomForestClassifier):
+                    raise ValueError("Modelo salvo não é válido.")
+                return model
+            except Exception as e:
+                log_message(f"Erro ao carregar modelo. Tentativa {attempt + 1}/{attempts}. Aguardando... {e}")
+                time.sleep(10)
+        
+        log_message("Falha ao carregar modelo após múltiplas tentativas. Recriando...")
+        os.remove(model_file)
+    
+    df = pd.read_csv(data_file)
+    if df.empty:
+        log_message("Arquivo CSV está vazio. Não é possível treinar o modelo.")
+        return None
+    
+    X = df.drop(columns=['target']).values
+    y = df['target'].astype(int).values  # Garante que 'target' seja inteiro
+    
+    model = RandomForestClassifier(n_estimators=100, random_state=42)
+    model.fit(X, y)
+    joblib.dump(model, model_file)
+    log_message("Modelo treinado e salvo com sucesso.")
+    return model
+
+# Função para validar o arquivo CSV
+def validate_csv():
+    if not os.path.exists(data_file) or os.stat(data_file).st_size == 0:
+        log_message("Arquivo de dados ausente ou vazio. Recriando...")
+        recreate_csv()
+        return False
+    
+    try:
+        df = pd.read_csv(data_file)
+        if df.empty or 'target' not in df.columns or df.shape[1] != 301:
+            log_message("Arquivo CSV inválido. Recriando...")
+            recreate_csv()
+            return False
+    except Exception as e:
+        log_message(f"Erro ao ler o arquivo CSV: {e}. Recriando...")
+        recreate_csv()
+        return False
+    
+    return True
+
+
+# Função para armazenar negociações e atualizar o modelo
+def store_trade_data_and_update_model(features, target):
+    if not validate_csv():
+        return
+
+    features = np.array(features).flatten()
+    new_data = pd.DataFrame([np.append(features, target)], 
+                             columns=[f"feature_{i}" for i in range(len(features))] + ['target'])
+    
+    # Verifica se o arquivo está no formato correto
+    df = pd.read_csv(data_file)
+
+    if 'target' not in df.columns:
+        log_message("Erro ao salvar dados: Coluna 'target' ausente. Recriando arquivo de dados...")
+        recreate_csv()
+        df = pd.read_csv(data_file)  # Recarrega após recriação
+    
+    expected_columns = df.shape[1]  # Número de colunas esperadas
+    actual_columns = len(features) + 1  # Inclui 'target'
+
+    if actual_columns != expected_columns:
+        log_message(f"Erro ao salvar dados: {actual_columns} colunas encontradas, mas {expected_columns} esperadas. Ajustando arquivo...")
+        recreate_csv()
+        return
+
+    df = pd.concat([df, new_data], ignore_index=True)
+    df.to_csv(data_file, index=False)
+    log_message("Dados da negociação armazenados.")
+
+    # Re-treina o modelo apenas se houver dados válidos
+    df = pd.read_csv(data_file)
+    if df.empty:
+        log_message("Arquivo CSV está vazio após escrita. Não é possível treinar o modelo.")
+        return
+    
+    X = df.drop(columns=['target']).values
+    y = df['target'].astype(int).values  # Garante que 'target' seja inteiro
+
+    model = RandomForestClassifier(n_estimators=100, random_state=42)
+    model.fit(X, y)
+    joblib.dump(model, model_file)
+    log_message("Modelo atualizado com novos dados.")
+
+
+
+
+# Função para usar o modelo na decisão de negociação
+def predict_trade_direction(asset, indicators, total_votes):
+    model = load_or_train_model()
+    if model is None:
+        return None  # Sem modelo treinado, sem previsão
+    
+    candles = fetch_candles(asset)
+    if candles is None:
+        return None
+    
+    features = candles.flatten().reshape(1, -1)  # Transformando os dados para o formato esperado
+    prediction = model.predict(features)
+    model_decision = 'buy' if prediction == 1 else 'sell'
+    
+    # O modelo decide, mas leva em conta os indicadores
+    if total_votes >= 3:
+        decision = 'buy'
+    elif total_votes <= 1:
+        decision = 'sell'
+    else:
+        decision = model_decision
+    
+    log_message(f"Decisão final para {asset}: {decision} (Modelo: {model_decision}, Indicadores: {indicators})")
+    return decision
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -293,22 +437,25 @@ def ignore_assets(asset):
         return True
     return asset.upper() in assets_to_ignore or "-CHIX" in asset.upper() or "XEMUSD-" in asset.upper() or "BSVUSD-" in asset.upper()
 
-def analyze_last_candles(data):
-    """
-    Analyzes the last 5 candles of 5 seconds each.
-    Returns 'up', 'down', or 'neutral' based on the analysis.
-    """
-    if len(data) < 5:
-        log_message("Dados insuficientes para análise dos últimos candles.")
-        return "neutral"
-
-    first_candle = data.iloc[-5]
-    if first_candle["close"] > first_candle["open"]:
-        return "up"
-    elif first_candle["close"] < first_candle["open"]:
-        return "down"
-    else:
-        return "neutral"
+# Função para analisar os indicadores técnicos
+def analyze_indicators(asset):
+    indicators = {
+        "rsi": 0, "macd": 0, "sma": 0, "ema": 0, "bollinger": 0
+    }
+    
+    data = fetch_historical_data(asset, 1, 60)
+    if data is None or data.empty:
+        return indicators, 0  # Sempre retorna dois valores válidos
+    
+    close_prices = data["close"]
+    if close_prices.iloc[-1] > close_prices.mean():
+        indicators["sma"] = 1
+    
+    if close_prices.iloc[-1] > close_prices.rolling(10).mean().iloc[-1]:
+        indicators["ema"] = 1
+    
+    total_votes = sum(indicators.values())
+    return indicators, total_votes
 
 def analyze_trend(asset):
     """
@@ -331,175 +478,27 @@ def analyze_trend(asset):
     else:
         return "neutral"
 
+
+# Função para analisar os indicadores técnicos
 def analyze_indicators(asset):
-    if ignore_assets(asset):
-        log_message(f"Ignorando ativo {asset}.")
-        return None
+    indicators = {
+        "rsi": 0, "macd": 0, "sma": 0, "ema": 0, "bollinger": 0
+    }
+    
+    data = fetch_historical_data(asset, 1, 60)
+    if data is None or data.empty:
+        return indicators, 0  # Sempre retorna dois valores válidos
+    
+    close_prices = data["close"]
+    if close_prices.iloc[-1] > close_prices.mean():
+        indicators["sma"] = 1
+    
+    if close_prices.iloc[-1] > close_prices.rolling(10).mean().iloc[-1]:
+        indicators["ema"] = 1
+    
+    total_votes = sum(indicators.values())
+    return indicators, total_votes
 
-    trend = analyze_trend(asset)
-    if trend == "neutral":
-        log_message(f"Mercado lateralizado para {asset}. Pulando ativo.")
-        return None
-
-    log_message(f"Analisando indicadores para {asset}...")
-    try:
-        data = fetch_historical_data(asset, 1, 100)
-
-        if data is None or data.empty:
-            log_message(f"Sem dados suficientes para {asset}. Pulando ativo.")
-            return None
-
-        # Ensure all columns are cast to compatible dtypes
-        data["close"] = data["close"].astype(float)
-        data["open"] = data["open"].astype(float)
-        data["high"] = data["high"].astype(float)
-        data["low"] = data["low"].astype(float)
-        if "volume" in data.columns:
-            data["volume"] = data["volume"].astype(float)
-
-        indicators = {}
-        available_indicators = {
-            "rsi": lambda: ta.rsi(data["close"], length=14),
-            "macd": lambda: ta.macd(data["close"])["MACD_12_26_9"],
-            "ema": lambda: ta.ema(data["close"], length=9),
-            "sma": lambda: ta.sma(data["close"], length=20),
-            "stochastic": lambda: ta.stoch(data["high"], data["low"], data["close"])["STOCHk_14_3_3"],
-            "atr": lambda: ta.atr(data["high"], data["low"], data["close"], length=14),
-            "adx": lambda: ta.adx(data["high"], data["low"], data["close"], length=14),
-            "bollinger_high": lambda: ta.bbands(data["close"])["BBU_20_2.0"] if "BBU_20_2.0" in ta.bbands(data["close"]) else None,
-            "bollinger_low": lambda: ta.bbands(data["close"])["BBL_20_2.0"] if "BBL_20_2.0" in ta.bbands(data["close"]) else None,
-            "cci": lambda: ta.cci(data["high"], data["low"], data["close"], length=20),
-            "willr": lambda: ta.willr(data["high"], data["low"], data["close"], length=14),
-            "roc": lambda: ta.roc(data["close"], length=12),
-            "obv": lambda: ta.obv(data["close"], data["volume"]),
-            "trix": lambda: ta.trix(data["close"], length=15),
-            "mfi": lambda: ta.mfi(data["high"], data["low"], data["close"], data["volume"], length=14).astype(float),
-            "dpo": lambda: ta.dpo(data["close"], length=14),
-            "keltner_upper": lambda: ta.kc(data["high"], data["low"], data["close"], length=20)["KCUp_20_2.1"] if "KCUp_20_2.1" in ta.kc(data["high"], data["low"], data["close"], length=20) else None,
-            "keltner_lower": lambda: ta.kc(data["high"], data["low"], data["close"], length=20)["KCLo_20_2.1"] if "KCLo_20_2.1" in ta.kc(data["high"], data["low"], data["close"], length=20) else None,
-            "ultimate_oscillator": lambda: ta.uo(data["high"], data["low"], data["close"]),
-            "tsi": lambda: ta.tsi(data["close"]),
-            "aroon_up": lambda: ta.aroon(data["high"], data["low"], length=25)["AROONU_25"],
-            "aroon_down": lambda: ta.aroon(data["high"], data["low"], length=25)["AROOND_25"],
-            "last_candles": lambda: analyze_last_candles(data),
-        }
-
-        for key, func in available_indicators.items():
-            try:
-                with warnings.catch_warnings():
-                    warnings.filterwarnings("error", category=FutureWarning)
-                    result = func()
-                    if result is not None and not isinstance(result, str) and not result.empty:
-                        indicators[key] = result.iloc[-1] if isinstance(result, pd.Series) else result
-            except FutureWarning as fw:
-                log_message(f"FutureWarning ao calcular {key.upper()} para {asset}: {fw}. Pulando indicador.")
-                indicators[key] = None
-            except Exception as e:
-                log_message(f"Erro ao calcular {key.upper()} para {asset}: {e}")
-                indicators[key] = None
-
-        decisions = []
-
-        if indicators.get("rsi") is not None:
-            if indicators["rsi"] < 30:
-                decisions.append("buy")
-            elif indicators["rsi"] > 70:
-                decisions.append("sell")
-
-        if indicators.get("macd") is not None:
-            if indicators["macd"] > 0:
-                decisions.append("buy")
-            elif indicators["macd"] < 0:
-                decisions.append("sell")
-
-        if indicators.get("ema") is not None:
-            if data["close"].iloc[-1] > indicators["ema"] and trend == "up":
-                decisions.append("buy")
-            elif data["close"].iloc[-1] < indicators["ema"] and trend == "down":
-                decisions.append("sell")
-
-        if indicators.get("sma") is not None:
-            if data["close"].iloc[-1] > indicators["sma"] and trend == "up":
-                decisions.append("buy")
-            elif data["close"].iloc[-1] < indicators["sma"] and trend == "down":
-                decisions.append("sell")
-
-        if indicators.get("stochastic") is not None:
-            if indicators["stochastic"] < 20:
-                decisions.append("buy")
-            elif indicators["stochastic"] > 80:
-                decisions.append("sell")
-
-        if indicators.get("bollinger_low") is not None and indicators.get("bollinger_high") is not None:
-            if data["close"].iloc[-1] < indicators["bollinger_low"]:
-                decisions.append("buy")
-            elif data["close"].iloc[-1] > indicators["bollinger_high"]:
-                decisions.append("sell")
-
-        if indicators.get("cci") is not None:
-            if indicators["cci"] < -100:
-                decisions.append("buy")
-            elif indicators["cci"] > 100:
-                decisions.append("sell")
-
-        if indicators.get("willr") is not None:
-            if indicators["willr"] < -80:
-                decisions.append("buy")
-            elif indicators["willr"] > -20:
-                decisions.append("sell")
-
-        if indicators.get("roc") is not None:
-            if indicators["roc"] > 0:
-                decisions.append("buy")
-            else:
-                decisions.append("sell")
-
-        if indicators.get("mfi") is not None:
-            if indicators["mfi"] < 20:
-                decisions.append("buy")
-            elif indicators["mfi"] > 80:
-                decisions.append("sell")
-
-        if indicators.get("aroon_up") is not None and indicators.get("aroon_down") is not None:
-            if indicators["aroon_up"] > 70:
-                decisions.append("buy")
-            if indicators["aroon_down"] > 70:
-                decisions.append("sell")
-
-        if indicators.get("last_candles") is not None:
-            if indicators["last_candles"] == "up":
-                decisions.append("buy")
-            elif indicators["last_candles"] == "down":
-                decisions.append("sell")
-
-        buy_votes = decisions.count("buy")
-        sell_votes = decisions.count("sell")
-        total_votes = buy_votes + sell_votes
-
-        log_message(f"Votação de indicadores para {asset}: BUY={buy_votes}, SELL={sell_votes}")
-        log_message(f"Decisões: {decisions}")
-
-        if total_votes == 0:
-            log_message("Nenhum voto válido. Pulando ativo.")
-            return None
-
-        majority = (total_votes // 2) + 2  # Update majority to 50%+2
-
-        if consecutive_losses >= 2:  # Invert votes starting from the third Martingale
-            print("Terceiro Martingale - Invertendo indicadores")
-            buy_votes, sell_votes = sell_votes, buy_votes
-
-        if buy_votes >= majority:
-            return "buy"
-        elif sell_votes >= majority:
-            return "sell"
-        else:
-            log_message("Consenso insuficiente entre os indicadores. Pulando ativo.")
-            return None
-
-    except Exception as e:
-        log_message(f"Erro ao analisar indicadores para {asset}: {e}")
-        return None
 
 def countdown(seconds):
     while seconds > 0:
@@ -543,55 +542,54 @@ def should_open_trade(opening_price, closing_price, min_difference):
         return False
     return True
 
-# Carregar o modelo treinado
-model_file = "IA/capybara-ai-project/models/trained_model.pkl"
-model = load_model(model_file)
-if model is None:
-    model = MLPClassifier()
-    print(f"Novo modelo criado, pois {model_file} não foi encontrado")
-
-# Variável global para armazenar as classes
-global_classes = np.array([0, 1])
-
-# Verificar se o modelo já foi treinado anteriormente
-if hasattr(model, 'classes_'):
-    global_classes = model.classes_
 
 
-def collect_data(asset):
-    """Collect data for the last 60 minutes."""
-    data = fetch_historical_data(asset, 1, 60)
-    print(f"Dados coletados para o ativo {asset}: {data}")
-    return data
-
-def calculate_indicators(data):
-    """Calculate indicators from the collected data."""
-    macd = ta.macd(data["close"])
-    if macd is not None:
-        macd_value = macd.iloc[-1]["MACD_12_26_9"]
+# Função para armazenar negociações e atualizar o modelo
+def store_trade_data_and_update_model(features, target):
+    new_data = pd.DataFrame([np.append(features, target)])
+    if not os.path.exists(data_file):
+        new_data.to_csv(data_file, index=False, header=['open', 'high', 'low', 'close', 'volume', 'target'])
     else:
-        macd_value = None
-
-    indicators = {
-        "rsi": ta.rsi(data["close"], length=14).iloc[-1] if ta.rsi(data["close"], length=14) is not None else None,
-        "macd": macd_value,
-        "ema": ta.ema(data["close"], length=20).iloc[-1] if ta.ema(data["close"], length=20) is not None else None,
-        "sma": ta.sma(data["close"], length=50).iloc[-1] if ta.sma(data["close"], length=50) is not None else None,
-        "volatility": calculate_volatility(data)
-    }
-    print(f"Indicadores calculados: {indicators}")
-    return indicators
-
-def update_model(model, X, y):
-    """Update the model with new data."""
-    global global_classes
-    log_message(f"Atualizando o modelo com X={X} e y={y}")
-    model.partial_fit(X, y, classes=global_classes)
+        new_data.to_csv(data_file, mode='a', header=False, index=False)
+    
+    # Re-treinar o modelo com novos dados
+    df = pd.read_csv(data_file)
+    X = df.drop(columns=['target']).values
+    y = df['target'].values
+    
+    model = RandomForestClassifier(n_estimators=100, random_state=42)
+    model.fit(X, y)
     joblib.dump(model, model_file)
-    log_message(f"Modelo salvo em {model_file}")
-    print(f"Modelo atualizado com X={X} e y={y}")
-    save_model(model, model_file)
 
+# Função para usar o modelo na decisão de negociação
+def predict_trade_direction(asset, indicators, total_votes):
+    model = load_or_train_model()
+    if model is None:
+        log_message(f"Sem modelo treinado para {asset}. Pulando decisão.")
+        return None
+    
+    candles = fetch_candles(asset)
+    if candles is None:
+        log_message(f"Sem dados de candles para {asset}. Pulando decisão.")
+        return None
+    
+    features = candles.flatten().reshape(1, -1)  # Transformando os dados para o formato esperado
+    prediction = model.predict(features)
+    model_decision = 'buy' if prediction == 1 else 'sell'
+    
+    # O modelo decide, mas leva em conta os indicadores
+    if total_votes >= 3:
+        decision = 'buy'
+    elif total_votes <= 1:
+        decision = 'sell'
+    else:
+        decision = model_decision
+    
+    log_message(f"Decisão final para {asset}: {decision} (Modelo: {model_decision}, Indicadores: {indicators})")
+    return decision
+
+
+# Integrar a IA na execução de negociações
 def execute_trades():
     global running
     global current_amount
@@ -619,55 +617,80 @@ def execute_trades():
 
             if simultaneous_trades >= max_simultaneous_trades:
                 log_message("Número máximo de negociações simultâneas atingido. Aguardando...")
-                countdown(50)  # Adjusted countdown for 5-minute trades
+                countdown(50)
                 check_trade_results()
                 update_session_profit()
                 continue
 
-            # Coletar dados dos últimos 60 minutos
-            data = collect_data(asset)
-            
-            # Calcular indicadores
-            indicators = calculate_indicators(data)
-            
-            # Tomar decisão de compra/venda
-            decision = analyze_indicators(asset)
-            if decision == "buy":
-                action = "call"
-            elif decision == "sell":
-                action = "put"
-            else:
-                log_message(f"Pulando negociação para {asset}. Sem consenso ou tendência contrária.")
+            check_trade_results()
+            update_session_profit()
+
+            if is_high_volatility(asset):
+                log_message(f"Alta volatilidade detectada para {asset}. Pulando ativo.")
                 continue
 
-            log_message(f"Tentando realizar negociação: Ativo={asset}, Ação={action}, Valor = R${current_amount}")
-            saldo_entrada = iq.get_balance()  # Store balance before trade
-            print(f"Balance before opening trade: {saldo_entrada}")  # Display balance before trade
+            result = analyze_indicators(asset)
+            log_message(f"Resultado dos indicadores para {asset}: {result}")
+            
+            if not isinstance(result, tuple) or len(result) != 2:
+                log_message(f"Erro ao obter indicadores para {asset}. Pulando ativo.")
+                continue
 
-            # Verificar a disponibilidade do ativo antes de tentar negociar
+            indicators, total_votes = result
+
+            # Aplicar regra para executar negociação se houver três ou mais indicadores em consenso
+            if total_votes >= 3:
+                decision = 'buy'
+            elif total_votes <= 1:
+                decision = 'sell'
+            else:
+                decision = predict_trade_direction(asset, indicators, total_votes)
+            
+            if not decision:
+                log_message(f"Pulando negociação para {asset}. Sem decisão clara.")
+                continue
+
+            action = "call" if decision == "buy" else "put"
+            log_message(f"Tentando realizar negociação: Ativo={asset}, Ação={action}, Valor = R${current_amount}")
+            saldo_entrada = iq.get_balance()
+            print(f"Balance before opening trade: {saldo_entrada}")
+
             available_assets = iq.get_all_ACTIVES_OPCODE()
             if asset not in available_assets:
                 log_message(f"Ativo {asset} não encontrado na plataforma. Pulando ativo.")
                 continue
 
             try:
-                success, trade_id = iq.buy(current_amount, asset, action, 5)  # Negociações de 5 minutos
+                success, trade_id = iq.buy(current_amount, asset, action, 5)
                 if success:
                     simultaneous_trades += 1
                     add_trade_to_list(trade_id)
                     log_message(f"Negociação realizada com sucesso para {asset}. ID da negociação={trade_id}")
-                    print(f"Balance after opening trade: {iq.get_balance()}")  # Display balance after opening trade
-                    threading.Thread(target=monitor_trade, args=(trade_id, asset, indicators)).start()
+                    print(f"Balance after opening trade: {iq.get_balance()}")
+                    threading.Thread(target=monitor_trade, args=(trade_id, asset)).start()
+                    
+                    # Salvar dados da negociação e atualizar o modelo
+                    candles = fetch_candles(asset)
+                    if candles is not None:
+                        features = candles.flatten()
+                        store_trade_data_and_update_model(features, 1 if decision == 'buy' else 0)
                 else:
-                    log_message(f"Falha ao realizar negociação para {asset}. Motivo: {trade_id}")  # Log the reason for failure
+                    log_message(f"Falha ao realizar negociação para {asset}. Motivo: {trade_id}")
             except Exception as e:
                 log_message(f"Erro durante a execução da negociação para {asset}: {e}")
                 if "WinError 10054" in str(e):
                     log_message("Conexão perdida. Tentando reconectar...")
                     reconnect_if_needed()
-                    continue
-                
-def monitor_trade(trade_id, asset, indicators):
+                    if iq and iq.check_connect():
+                        log_message("Reconexão bem-sucedida. Continuando operações.")
+                        continue
+                    else:
+                        log_message("Falha na reconexão. Parando operações.")
+                        running = False
+                        break
+
+
+def monitor_trade(trade_id, asset):
     global simultaneous_trades
     global session_profit
     global consecutive_losses
@@ -689,17 +712,10 @@ def monitor_trade(trade_id, asset, indicators):
             except Exception as e:
                 print(f"Erro ao verificar status da negociação {trade_id}: {e}")
                 log_message(f"Erro ao verificar status da negociação {trade_id}: {e}")
+                time.sleep(1)
 
-        print(f"Resultado bruto da negociação {trade_id}: {result}")
-
-        # Adicione um print detalhado para inspecionar a estrutura da tupla
         if isinstance(result, tuple):
-            print(f"Estrutura da tupla de resultados: {result}")
-            for i, value in enumerate(result):
-                print(f"Elemento {i}: {value}")
-
             result = result[0]  # Assuming the first element of the tuple is the profit/loss value
-            print(f"Primeiro elemento da tupla result: {result}")
         if isinstance(result, str):
             if result.lower() == "win":
                 result = 1.0
@@ -718,18 +734,6 @@ def monitor_trade(trade_id, asset, indicators):
 
         print(f"Resultado da negociação para {asset}: {'Vitória' if result > 0 else 'Perda'}, Lucro={result}")
         log_message(f"Resultado da negociação para {asset}: {'Vitória' if result > 0 else 'Perda'}, Lucro={result}")
-
-        # Coletar dados dos últimos 60 minutos
-        data = collect_data(asset)
-        
-        # Calcular indicadores
-        indicators = calculate_indicators(data)
-
-        # Atualizar o modelo com o resultado da negociação
-        y = [1 if result > 0 else 0]
-        X = np.array(list(indicators.values())).reshape(1, -1)
-        log_message(f"Dados para atualização do modelo: X={X}, y={y}")
-        update_model(model, X, y)
 
         update_session_profit()
 
@@ -751,6 +755,7 @@ def monitor_trade(trade_id, asset, indicators):
             consecutive_losses = 0
             set_amount()  # Reset to initial amount after a win
             amount_doubled = False  # Reset the flag
+            print("Negociação Bem Sucedida, Restaurando Indicadores")
             log_message(f"Negociação bem-sucedida. Valor de negociação resetado para: R${current_amount}")
             update_martingale_label()  # Update Martingale label
 
@@ -788,18 +793,6 @@ def check_trade_results():
 
                 session_profit += result
                 log_message(f"Resultado da negociação {trade_id}: {'Vitória' if result > 0 else 'Perda'}, Lucro={result}")
-                # Coletar dados dos últimos 60 minutos
-                asset = iq.get_asset_by_id(trade_id)  # Get the asset for this trade
-                data = collect_data(asset)
-                
-                # Calcular indicadores
-                indicators = calculate_indicators(data)
-                
-                # Atualizar o modelo com o resultado da negociação
-                y = [1 if result > 0 else 0]
-                X = np.array(list(indicators.values())).reshape(1, -1)
-                log_message(f"Dados para atualização do modelo: X={X}, y={y}")
-                update_model(model, X, y)
 
                 if result <= 0:
                     consecutive_losses += 1
@@ -857,25 +850,22 @@ def update_log():
         root.after(1000, update_log)
 
 # Update the set_amount function to use 5% of the account balance
-def set_amount(amount=None):
+def set_amount():
     global initial_amount
     global current_amount
-    if amount is not None:
-        current_amount = amount
-    else:
-        balance = iq.get_balance()
-        initial_amount = balance * 0.02  # Set to 2% of the balance
-        current_amount = initial_amount
-        log_message(f"Initial amount set to 2% of balance: R${initial_amount:.2f}")
-        balance_label.config(text=f"Balance: R${balance:.2f}")
-        update_martingale_label()  # Update Martingale label
+    balance = iq.get_balance()
+    initial_amount = balance * 0.02  # Set to 2% of the balance
+    current_amount = initial_amount
+    log_message(f"Initial amount set to 2% of balance: R${initial_amount:.2f}")
+    balance_label.config(text=f"Balance: R${balance:.2f}")
+    update_martingale_label()  # Update Martingale label
 
 # Function to update the Martingale label
 def update_martingale_label():
     if current_amount > initial_amount:
         martingale_label.config(text="M", fg="red")
     else:
-        martingale_label.config(text="M", fg="#000000")  # Same color as the background
+        martingale_label.config(text="M", fg="#011203")  # Same color as the background
 
 # Function to stop and start trading if the code freezes for more than 15 seconds
 def watchdog():
@@ -893,41 +883,41 @@ def watchdog():
 
 # Start the watchdog thread
 threading.Thread(target=watchdog, daemon=True).start()
-
+#-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*
 # GUI Configuration
 root = tk.Tk()
-root.title(f"Capybara AI v0.6 - Conta: {account_type} - {email}")
-root.configure(bg="#000000")
+root.title(f"Capybara v7.8 - Conta: {account_type} - {email}")
+root.configure(bg="#011203")
 
 static_icon = PhotoImage(file="static_icon.png")
 rotating_icon = PhotoImage(file="working_capy.png")
-icon_label = tk.Label(root, image=static_icon, bg="#000000")
+icon_label = tk.Label(root, image=static_icon, bg="#011203")
 icon_label.grid(row=0, column=0, rowspan=2, padx=10, pady=10)
 
 stop_button = tk.Button(root, text="Smart Stop", command=stop_trading, bg="#F44336", fg="white", font=("Helvetica", 12))
 stop_button.grid(row=0, column=1, padx=5, pady=5)
 
-balance_label = tk.Label(root, text="Balance: R$0.00", bg="#000000", fg="white", font=("Helvetica", 12))
+balance_label = tk.Label(root, text="Balance: R$0.00", bg="#011203", fg="white", font=("Helvetica", 12))
 balance_label.grid(row=1, column=1, columnspan=2, padx=5, pady=5)
 
 # Add Martingale label
-martingale_label = tk.Label(root, text="M", bg="#000000", fg="#000000", font=("Helvetica", 12))
+martingale_label = tk.Label(root, text="M", bg="#011203", fg="#011203", font=("Helvetica", 12))
 martingale_label.grid(row=1, column=3, padx=5, pady=5)
 
-log_text = ScrolledText(root, height=10, font=("Courier", 10), bg="#000000", fg="white")
+log_text = ScrolledText(root, height=10, font=("Courier", 10), bg="#011203", fg="white")
 log_text.grid(row=3, column=0, columnspan=5, padx=10, pady=10)
 
 # Redirect stdout and stderr to the log_text widget
 sys.stdout = TextRedirector(log_text, "stdout")
 sys.stderr = TextRedirector(log_text, "stderr")
 
-profit_label = tk.Label(root, text="Lucro: R$0.00", font=("Helvetica", 16), bg="#000000", fg="white")
+profit_label = tk.Label(root, text="Lucro: R$0.00", font=("Helvetica", 16), bg="#011203", fg="white")
 profit_label.grid(row=4, column=0, columnspan=5, padx=10, pady=10)
 
 footer_label = tk.Label(
     root,
      text="@oedlopes - 2025  - Deus Seja Louvado - Sola Scriptura - Sola Fide - Solus Christus - Sola Gratia - Soli Deo Gloria",
-    bg="#000000",
+    bg="#011203",
     fg="#A9A9A9",
     font=("Helvetica", 7)
 )
@@ -940,7 +930,7 @@ update_session_profit()
 start_trading()
 
 root.mainloop()
-
+#-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*
 def update_open_trades_label():
     if running:
         root.after(1000, update_open_trades_label)
@@ -1025,12 +1015,12 @@ test_martingale_logic()
 # Configuração da GUI
 root = tk.Tk()
 root.title("Capybara v7.7")
-root.configure(bg="#000000")
+root.configure(bg="#011203")
 
 
 static_icon = PhotoImage(file="static_icon.png")
 rotating_icon = PhotoImage(file="working_capy.png")
-icon_label = tk.Label(root, image=static_icon, bg="#000000")
+icon_label = tk.Label(root, image=static_icon, bg="#011203")
 icon_label.grid(row=0, column=0, rowspan=2, padx=10, pady=10)
 
 start_button = tk.Button(root, text="Start", command=start_trading, bg="#4CAF50", fg="white", font=("Helvetica", 12))
@@ -1039,7 +1029,7 @@ start_button.grid(row=0, column=1, padx=5, pady=5)
 stop_button = tk.Button(root, text="Stop", command=stop_trading, bg="#F44336", fg="white", font=("Helvetica", 12))
 stop_button.grid(row=0, column=2, padx=5, pady=5)
 
-amount_label = tk.Label(root, text="Initial Amount:", bg="#000000", fg="white", font=("Helvetica", 12))
+amount_label = tk.Label(root, text="Initial Amount:", bg="#011203", fg="white", font=("Helvetica", 12))
 amount_label.grid(row=1, column=1, padx=5, pady=5)
 
 amount_entry = tk.Entry(root, font=("Helvetica", 12))
@@ -1049,17 +1039,17 @@ amount_entry.grid(row=1, column=2, padx=5, pady=5)
 set_button = tk.Button(root, text="Set Amount", command=lambda: set_amount(float(amount_entry.get())), bg="#FFC107", fg="black", font=("Helvetica", 12))
 set_button.grid(row=1, column=3, padx=5, pady=5)
 
-log_text = ScrolledText(root, height=10, font=("Courier", 10), bg="#000000", fg="white")
+log_text = ScrolledText(root, height=10, font=("Courier", 10), bg="#011203", fg="white")
 log_text.grid(row=2, column=0, columnspan=5, padx=10, pady=10)
 
-profit_label = tk.Label(root, text="Lucro: R$0.00", font=("Helvetica", 16), bg="#000000", fg="white")
+profit_label = tk.Label(root, text="Lucro: R$0.00", font=("Helvetica", 16), bg="#011203", fg="white")
 profit_label.grid(row=3, column=0, columnspan=5, padx=10, pady=10)
 
 # Rodapé
 footer_label = tk.Label(
     root,
     text="@oedlopes - 2025  - Deus seja louvado",
-    bg="#000000",
+    bg="#011203",
     fg="#A9A9A9",
     font=("Helvetica", 8)
 )
@@ -1072,7 +1062,7 @@ invalid_credentials = False
 if invalid_credentials:
     log_text.insert(tk.END, "Invalid credentials. Please check the credentials.txt file.\n")
 
-
+root.mainloop()
 
 def calculate_success_probability(asset, direction):
     """
@@ -1144,5 +1134,42 @@ connect_to_iq_option(email, password)
 set_amount()
 update_balance()  # Start the periodic balance update
 
-root.mainloop()
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 

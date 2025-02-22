@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-# Arquivo: Capybara_AI.0.6.py
+# Arquivo: Capybara.7.7.py
 #PECUNIA IMPROMPTA
 #Código construido com Copilot e otimizado utilizando DeepSeek, o ChatGPT de flango.
 from iqoptionapi.stable_api import IQ_Option
@@ -14,6 +14,7 @@ import pandas_ta as ta
 import json
 import logging
 import warnings
+import pickle
 import sys
 import yfinance as yf  # Import yfinance library
 from pyti.relative_strength_index import relative_strength_index as pyti_rsi
@@ -32,11 +33,6 @@ from pyti.detrended_price_oscillator import detrended_price_oscillator as pyti_d
 from pyti.ultimate_oscillator import ultimate_oscillator as pyti_ultimate
 from pyti.aroon import aroon_up as pyti_aroon_up, aroon_down as pyti_aroon_down
 from trading_strategy import should_open_trade, should_abandon_trade, calculate_success_probability, should_enter_trade
-import joblib
-import numpy as np
-from sklearn.neural_network import MLPClassifier
-from model_management import load_model, save_model
-
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -52,6 +48,24 @@ class TextRedirector:
 
     def flush(self):
         pass
+
+# Carregar modelo treinado (se existir)
+def load_model():
+    try:
+        with open("trained_model.pkl", "rb") as file:
+            model = pickle.load(file)
+        print("Modelo carregado com sucesso.")
+        return model
+    except FileNotFoundError:
+        print("Nenhum modelo encontrado. Criando um novo modelo...")
+        return []  # Iniciar como lista vazia para novos dados
+
+# Salvar modelo atualizado
+def save_model(data):
+    with open("trained_model.pkl", "wb") as file:
+        pickle.dump(data, file)
+    print("Modelo atualizado salvo.")
+
 
 # Carregar credenciais do arquivo
 credentials_file = os.path.normpath(os.path.join(os.getcwd(), "credentials.txt"))
@@ -135,7 +149,7 @@ account_type = "PRACTICE"  # Conta Prática - Modo de teste
 instrument_types = ["binary", "digital", "crypto", "otc"]  # Tipos de instrumentos suportados
 
 # Definir variáveis globais
-running = False
+running = True
 icon_label = None
 initial_amount = 2
 current_amount = 2  # Acompanhar o valor atual da negociação para estratégia Martingale
@@ -149,6 +163,7 @@ trade_list = []
 saldo_entrada = 0  # Saldo na hora de começar uma operação
 saldo_saida = 0  # Saldo no fim da operação
 amount_doubled = False  # Flag to track if the amount has been doubled
+
 
 # Define preset trade value
 auto_initial_amount = 2
@@ -240,17 +255,10 @@ def reconnect_if_needed():
                 running = True
                 threading.Thread(target=execute_trades).start()  # Restart trading if it was stopped
 
-def fetch_historical_data(asset, duration, candle_count):
-    reconnect_if_needed()
-    if iq is None:
-        log_message(f"API desconectada. Não é possível buscar dados históricos para {asset}.")
-        return pd.DataFrame()  # Return an empty DataFrame if disconnected
-    candles = iq.get_candles(asset, duration * 60, candle_count, time.time())
+def fetch_historical_data(iq, asset):
+    candles = iq.get_candles(asset, 60, 60, time.time())
     df = pd.DataFrame(candles)
-    df["close"] = df["close"].astype(float)
-    df["open"] = df["open"].astype(float)
-    df["high"] = df["max"].astype(float)
-    df["low"] = df["min"].astype(float)
+    df = df[["open", "close", "max", "min", "volume"]]
     return df
 
 # Função para reconectar à API
@@ -512,6 +520,12 @@ MIN_DIFFERENCE = 0.0005
 MAX_LOSS = 0.0010
 MIN_PROBABILITY = 0.6
 
+# Calcular indicadores e volatilidade
+def calculate_indicators(data):
+    data['volatility'] = data['max'] - data['min']
+    data['sma'] = data['close'].rolling(window=10).mean()
+    return data.iloc[-1]  # Retorna apenas os últimos valores dos indicadores
+
 def calculate_volatility(data):
     """
     Calculate the volatility of the asset based on historical data.
@@ -543,222 +557,79 @@ def should_open_trade(opening_price, closing_price, min_difference):
         return False
     return True
 
-# Carregar o modelo treinado
-model_file = "IA/capybara-ai-project/models/trained_model.pkl"
-model = load_model(model_file)
-if model is None:
-    model = MLPClassifier()
-    print(f"Novo modelo criado, pois {model_file} não foi encontrado")
-
-# Variável global para armazenar as classes
-global_classes = np.array([0, 1])
-
-# Verificar se o modelo já foi treinado anteriormente
-if hasattr(model, 'classes_'):
-    global_classes = model.classes_
-
-
-def collect_data(asset):
-    """Collect data for the last 60 minutes."""
-    data = fetch_historical_data(asset, 1, 60)
-    print(f"Dados coletados para o ativo {asset}: {data}")
-    return data
-
-def calculate_indicators(data):
-    """Calculate indicators from the collected data."""
-    macd = ta.macd(data["close"])
-    if macd is not None:
-        macd_value = macd.iloc[-1]["MACD_12_26_9"]
-    else:
-        macd_value = None
-
-    indicators = {
-        "rsi": ta.rsi(data["close"], length=14).iloc[-1] if ta.rsi(data["close"], length=14) is not None else None,
-        "macd": macd_value,
-        "ema": ta.ema(data["close"], length=20).iloc[-1] if ta.ema(data["close"], length=20) is not None else None,
-        "sma": ta.sma(data["close"], length=50).iloc[-1] if ta.sma(data["close"], length=50) is not None else None,
-        "volatility": calculate_volatility(data)
-    }
-    print(f"Indicadores calculados: {indicators}")
-    return indicators
-
-def update_model(model, X, y):
-    """Update the model with new data."""
-    global global_classes
-    log_message(f"Atualizando o modelo com X={X} e y={y}")
-    model.partial_fit(X, y, classes=global_classes)
-    joblib.dump(model, model_file)
-    log_message(f"Modelo salvo em {model_file}")
-    print(f"Modelo atualizado com X={X} e y={y}")
-    save_model(model, model_file)
-
-def execute_trades():
-    global running
-    global current_amount
-    global consecutive_losses
-    global session_profit
-    global simultaneous_trades
-    global saldo_entrada
-
+# Adapted execute_trades function
+def execute_trades(iq, model_data, trade_list, consecutive_losses, current_amount, initial_amount, session_profit, saldo_saida, amount_doubled, running, max_simultaneous_trades):
     while running:
-        log_message("Executando negociações...")
-        assets = fetch_sorted_assets()
-
-        if not assets:
-            log_message("Nenhum ativo encontrado. Parando execução.")
-            break
-
+        print("Executando negociações...")
+        assets = ["EURUSD", "GBPUSD"]  # Lista de ativos para negociar
+        
         for asset in assets:
             if not running:
-                log_message("Execução de negociações interrompida.")
+                print("Execução de negociações interrompida.")
                 break
 
-            if ignore_assets(asset):
-                log_message(f"Ignorando ativo {asset}.")
+            if len(trade_list) >= max_simultaneous_trades:
+                print("Número máximo de negociações simultâneas atingido. Aguardando...")
+                time.sleep(5)
                 continue
 
-            if simultaneous_trades >= max_simultaneous_trades:
-                log_message("Número máximo de negociações simultâneas atingido. Aguardando...")
-                countdown(50)  # Adjusted countdown for 5-minute trades
-                check_trade_results()
-                update_session_profit()
-                continue
+            historical_data = fetch_historical_data(iq, asset)
+            indicators = calculate_indicators(historical_data)
+            success, trade_id = iq.buy(current_amount, asset, "call", 1)
+            if success:
+                trade_list.append(trade_id)
+                threading.Thread(target=monitor_trade, args=(iq, trade_id, asset, indicators, model_data, trade_list, consecutive_losses, current_amount, initial_amount, session_profit, saldo_saida, amount_doubled)).start()
 
-            # Coletar dados dos últimos 60 minutos
-            data = collect_data(asset)
-            
-            # Calcular indicadores
-            indicators = calculate_indicators(data)
-            
-            # Tomar decisão de compra/venda
-            decision = analyze_indicators(asset)
-            if decision == "buy":
-                action = "call"
-            elif decision == "sell":
-                action = "put"
-            else:
-                log_message(f"Pulando negociação para {asset}. Sem consenso ou tendência contrária.")
-                continue
 
-            log_message(f"Tentando realizar negociação: Ativo={asset}, Ação={action}, Valor = R${current_amount}")
-            saldo_entrada = iq.get_balance()  # Store balance before trade
-            print(f"Balance before opening trade: {saldo_entrada}")  # Display balance before trade
+def monitor_trade(iq, trade_id, asset, indicators, model_data, trade_list, consecutive_losses, current_amount, initial_amount, session_profit, saldo_saida, amount_doubled):
+    print(f"Monitorando negociação {trade_id} para o ativo {asset}...")
+    result = None
+    while result is None:
+        try:
+            result = iq.check_win_v4(trade_id)
+            if result is None:
+                print(f"Negociação {trade_id} ainda não concluída. Tentando novamente em 1 segundo...")
+                time.sleep(1)
+        except Exception as e:
+            print(f"Erro ao verificar status da negociação {trade_id}: {e}")
+            time.sleep(1)
 
-            # Verificar a disponibilidade do ativo antes de tentar negociar
-            available_assets = iq.get_all_ACTIVES_OPCODE()
-            if asset not in available_assets:
-                log_message(f"Ativo {asset} não encontrado na plataforma. Pulando ativo.")
-                continue
+    if isinstance(result, tuple):
+        result = result[0]
+    if isinstance(result, str):
+        result = 1.0 if result.lower() == "win" else -1.0 if result.lower() == "loose" else 0.0
+    else:
+        try:
+            result = float(result)
+        except ValueError:
+            result = 0.0
 
-            try:
-                success, trade_id = iq.buy(current_amount, asset, action, 5)  # Negociações de 5 minutos
-                if success:
-                    simultaneous_trades += 1
-                    add_trade_to_list(trade_id)
-                    log_message(f"Negociação realizada com sucesso para {asset}. ID da negociação={trade_id}")
-                    print(f"Balance after opening trade: {iq.get_balance()}")  # Display balance after opening trade
-                    threading.Thread(target=monitor_trade, args=(trade_id, asset, indicators)).start()
-                else:
-                    log_message(f"Falha ao realizar negociação para {asset}. Motivo: {trade_id}")  # Log the reason for failure
-            except Exception as e:
-                log_message(f"Erro durante a execução da negociação para {asset}: {e}")
-                if "WinError 10054" in str(e):
-                    log_message("Conexão perdida. Tentando reconectar...")
-                    reconnect_if_needed()
-                    continue
-                
-def monitor_trade(trade_id, asset, indicators):
-    global simultaneous_trades
-    global session_profit
-    global consecutive_losses
-    global current_amount
-    global saldo_saida
-    global amount_doubled
-
-    try:
-        print(f"Monitorando negociação {trade_id} para o ativo {asset}...")
-        log_message(f"Monitorando negociação {trade_id} para o ativo {asset}...")
-        result = None
-        while result is None:
-            try:
-                result = iq.check_win_v4(trade_id)
-                if result is None:
-                    print(f"Negociação {trade_id} ainda não concluída. Tentando novamente em 1 segundo...")
-                    log_message(f"Negociação {trade_id} ainda não concluída. Tentando novamente em 1 segundo...")
-                    time.sleep(1)
-            except Exception as e:
-                print(f"Erro ao verificar status da negociação {trade_id}: {e}")
-                log_message(f"Erro ao verificar status da negociação {trade_id}: {e}")
-
-        print(f"Resultado bruto da negociação {trade_id}: {result}")
-
-        # Adicione um print detalhado para inspecionar a estrutura da tupla
-        if isinstance(result, tuple):
-            print(f"Estrutura da tupla de resultados: {result}")
-            for i, value in enumerate(result):
-                print(f"Elemento {i}: {value}")
-
-            result = result[0]  # Assuming the first element of the tuple is the profit/loss value
-            print(f"Primeiro elemento da tupla result: {result}")
-        if isinstance(result, str):
-            if result.lower() == "win":
-                result = 1.0
-            elif result.lower() == "loose":
-                result = -1.0
-            else:
-                try:
-                    result = float(result)  # Convert string to float
-                except ValueError:
-                    print(f"Erro ao converter resultado para float: {result}")
-                    log_message(f"Erro ao converter resultado para float: {result}")
-                    result = 0.0  # Default to 0.0 if conversion fails
-
-        session_profit += result
-        saldo_saida = iq.get_balance()  # Store balance after trade
-
-        print(f"Resultado da negociação para {asset}: {'Vitória' if result > 0 else 'Perda'}, Lucro={result}")
-        log_message(f"Resultado da negociação para {asset}: {'Vitória' if result > 0 else 'Perda'}, Lucro={result}")
-
-        # Coletar dados dos últimos 60 minutos
-        data = collect_data(asset)
-        
-        # Calcular indicadores
-        indicators = calculate_indicators(data)
-
-        # Atualizar o modelo com o resultado da negociação
-        y = [1 if result > 0 else 0]
-        X = np.array(list(indicators.values())).reshape(1, -1)
-        log_message(f"Dados para atualização do modelo: X={X}, y={y}")
-        update_model(model, X, y)
-
-        update_session_profit()
-
-        if result <= 0:
-            consecutive_losses += 1
-            if consecutive_losses > 3:  # Reset to initial amount after 3 consecutive losses
-                log_message("Número de perdas consecutivas excedido. Resetando valor inicial.")
-                consecutive_losses = 0
-                set_amount()  # Reset to initial amount
-                amount_doubled = False
-            else:
-                log_message(f"Perda consecutiva #{consecutive_losses}.")
-                if not amount_doubled:  # Ensure the amount is only doubled once per loss
-                    current_amount *= 2  # Correctly double the amount
-                    amount_doubled = True  # Set the flag to indicate the amount has been doubled
-                    log_message(f"Dobrar valor da negociação. Próximo valor de negociação: R${current_amount}")
-                    update_martingale_label()  # Update Martingale label
-        else:
+    session_profit += result
+    saldo_saida = iq.get_balance()
+    print(f"Resultado da negociação para {asset}: {'Vitória' if result > 0 else 'Perda'}, Lucro={result}")
+    
+    indicators['result'] = result
+    model_data.append(indicators)
+    save_model(model_data)
+    
+    if result <= 0:
+        consecutive_losses += 1
+        if consecutive_losses > 3:
             consecutive_losses = 0
-            set_amount()  # Reset to initial amount after a win
-            amount_doubled = False  # Reset the flag
-            log_message(f"Negociação bem-sucedida. Valor de negociação resetado para: R${current_amount}")
-            update_martingale_label()  # Update Martingale label
+            current_amount = initial_amount
+            amount_doubled = False
+        else:
+            if not amount_doubled:
+                current_amount *= 2
+                amount_doubled = True
+    else:
+        consecutive_losses = 0
+        current_amount = initial_amount
+        amount_doubled = False
 
-    finally:
-        simultaneous_trades -= 1
-        if trade_id in trade_list:
-            trade_list.remove(trade_id)  # Ensure the trade is removed from the list after checking
-        print(f"Balance after closing trade: {iq.get_balance()}")  # Display balance after closing trade
+    if trade_id in trade_list:
+        trade_list.remove(trade_id)
+    print(f"Balance after closing trade: {saldo_saida}")
 
 def check_trade_results():
     global trade_list
@@ -788,18 +659,6 @@ def check_trade_results():
 
                 session_profit += result
                 log_message(f"Resultado da negociação {trade_id}: {'Vitória' if result > 0 else 'Perda'}, Lucro={result}")
-                # Coletar dados dos últimos 60 minutos
-                asset = iq.get_asset_by_id(trade_id)  # Get the asset for this trade
-                data = collect_data(asset)
-                
-                # Calcular indicadores
-                indicators = calculate_indicators(data)
-                
-                # Atualizar o modelo com o resultado da negociação
-                y = [1 if result > 0 else 0]
-                X = np.array(list(indicators.values())).reshape(1, -1)
-                log_message(f"Dados para atualização do modelo: X={X}, y={y}")
-                update_model(model, X, y)
 
                 if result <= 0:
                     consecutive_losses += 1
@@ -857,18 +716,15 @@ def update_log():
         root.after(1000, update_log)
 
 # Update the set_amount function to use 5% of the account balance
-def set_amount(amount=None):
+def set_amount():
     global initial_amount
     global current_amount
-    if amount is not None:
-        current_amount = amount
-    else:
-        balance = iq.get_balance()
-        initial_amount = balance * 0.02  # Set to 2% of the balance
-        current_amount = initial_amount
-        log_message(f"Initial amount set to 2% of balance: R${initial_amount:.2f}")
-        balance_label.config(text=f"Balance: R${balance:.2f}")
-        update_martingale_label()  # Update Martingale label
+    balance = iq.get_balance()
+    initial_amount = balance * 0.02  # Set to 2% of the balance
+    current_amount = initial_amount
+    log_message(f"Initial amount set to 2% of balance: R${initial_amount:.2f}")
+    balance_label.config(text=f"Balance: R${balance:.2f}")
+    update_martingale_label()  # Update Martingale label
 
 # Function to update the Martingale label
 def update_martingale_label():
@@ -896,7 +752,7 @@ threading.Thread(target=watchdog, daemon=True).start()
 
 # GUI Configuration
 root = tk.Tk()
-root.title(f"Capybara AI v0.6 - Conta: {account_type} - {email}")
+root.title(f"Capybara v7.7 - Conta: {account_type} - {email}")
 root.configure(bg="#000000")
 
 static_icon = PhotoImage(file="static_icon.png")
@@ -1072,7 +928,7 @@ invalid_credentials = False
 if invalid_credentials:
     log_text.insert(tk.END, "Invalid credentials. Please check the credentials.txt file.\n")
 
-
+root.mainloop()
 
 def calculate_success_probability(asset, direction):
     """
@@ -1144,5 +1000,42 @@ connect_to_iq_option(email, password)
 set_amount()
 update_balance()  # Start the periodic balance update
 
-root.mainloop()
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
