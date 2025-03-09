@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-# Arquivo: Capybara.7.7.py
+# Arquivo: Capybara.8.4.py
 #PECUNIA IMPROMPTA
 #Código construido com Copilot e otimizado utilizando DeepSeek, o ChatGPT de flango.
 from iqoptionapi.stable_api import IQ_Option
@@ -10,28 +10,29 @@ import tkinter as tk
 from tkinter.scrolledtext import ScrolledText
 from tkinter import PhotoImage
 import pandas as pd
-import pandas_ta as ta
+import numpy as np
 import json
 import logging
-import warnings
+from xgboost import XGBClassifier
+from sklearn.metrics import f1_score
+import joblib
 import sys
-import yfinance as yf  # Import yfinance library
 from pyti.relative_strength_index import relative_strength_index as pyti_rsi
 from pyti.moving_average_convergence_divergence import moving_average_convergence_divergence as pyti_macd
 from pyti.simple_moving_average import simple_moving_average as pyti_sma
 from pyti.exponential_moving_average import exponential_moving_average as pyti_ema
 from pyti.bollinger_bands import percent_b as pyti_bollinger
-from pyti.average_true_range import average_true_range as pyti_atr
-from pyti.stochastic import percent_k as pyti_stochastic
-from pyti.williams_percent_r import williams_percent_r as pyti_willr
-from pyti.commodity_channel_index import commodity_channel_index as pyti_cci
-from pyti.rate_of_change import rate_of_change as pyti_roc
-from pyti.on_balance_volume import on_balance_volume as pyti_obv
-from pyti.money_flow_index import money_flow_index as pyti_mfi
-from pyti.detrended_price_oscillator import detrended_price_oscillator as pyti_dpo
-from pyti.ultimate_oscillator import ultimate_oscillator as pyti_ultimate
-from pyti.aroon import aroon_up as pyti_aroon_up, aroon_down as pyti_aroon_down
-from trading_strategy import should_open_trade, should_abandon_trade, calculate_success_probability, should_enter_trade
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import accuracy_score, f1_score
+from xgboost import XGBClassifier
+import random
+
+
+
+def predict_trade_direction(asset):
+    decision = 'buy' if random.random() < 0.5 else 'sell'
+    log_message(f"Decisão aleatória para {asset}: {decision}")
+    return decision
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -49,7 +50,7 @@ class TextRedirector:
         pass
 
 # Carregar credenciais do arquivo
-credentials_file = os.path.normpath(os.path.join(os.getcwd(), "credentials.txt"))
+credentials_file = os.path.normpath(os.path.join(os.getcwd(), "credentials2.txt"))
 
 def load_credentials():
     try:
@@ -64,6 +65,13 @@ def load_credentials():
 email, password = load_credentials()
 
 log_file = os.path.normpath(os.path.join(os.getcwd(), f"trade_log_{time.strftime('%Y-%m-%d')}.txt"))
+
+def update_balance():
+    if iq is not None:
+        balance = iq.get_balance()
+        balance_label.config(text=f"Balance: R${balance:.2f}")
+        log_message(f"Balance updated: R${balance:.2f}")
+    root.after(60000, update_balance)  # Schedule the function to run every minute
 
 def log_message(message):
     try:
@@ -125,8 +133,8 @@ on_message('')
 on_message('not a json')
 
 # Inicializar a API IQ Option
-# account_type = "PRACTICE"  # Conta Prática - Modo de teste
-account_type = "REAL"  # Conta Real
+account_type = "PRACTICE"  # Conta Prática - Modo de teste
+# account_type = "REAL"  # Conta Real
 instrument_types = ["binary", "digital", "crypto", "otc"]  # Tipos de instrumentos suportados
 
 # Definir variáveis globais
@@ -134,7 +142,7 @@ running = False
 icon_label = None
 initial_amount = 2
 current_amount = 2  # Acompanhar o valor atual da negociação para estratégia Martingale
-max_simultaneous_trades = 1
+max_simultaneous_trades = 3
 simultaneous_trades = 0  # Inicializar o contador de negociações simultâneas
 martingale_limit = 5  # Limite de negociações Martingale consecutivas
 consecutive_losses = 0
@@ -144,7 +152,7 @@ trade_list = []
 saldo_entrada = 0  # Saldo na hora de começar uma operação
 saldo_saida = 0  # Saldo no fim da operação
 amount_doubled = False  # Flag to track if the amount has been doubled
-invert_indicators = False
+max_simultaneous_trades = 1
 
 # Define preset trade value
 auto_initial_amount = 2
@@ -179,16 +187,8 @@ def connect_to_iq_option(email, password):
         iq = None
     return check if 'check' in locals() else False, reason if 'reason' in locals() else "Unknown error"
 
-
-def update_balance():
-    if iq is not None:
-        balance = iq.get_balance()
-        balance_label.config(text=f"Balance: R${balance:.2f}")
-        log_message(f"Balance updated: R${balance:.2f}")
-    root.after(60000, update_balance)  # Schedule the function to run every minute
-
-
 # Adapted fetch_sorted_assets function
+
 def fetch_sorted_assets():
     logging.info("Buscando e classificando ativos por lucratividade e volume para negociações de 5 minutos...")
     reconnect_if_needed()
@@ -200,7 +200,7 @@ def fetch_sorted_assets():
     try:
         assets = iq.get_all_ACTIVES_OPCODE()
         raw_profitability = iq.get_all_profit()
-        raw_volume = {}  # Placeholder for actual volume fetching logic
+        
 
         profitability = {}
         volume = {}
@@ -218,14 +218,14 @@ def fetch_sorted_assets():
             assets.keys(),
             key=lambda asset: (profitability.get(asset, 0.0), volume.get(asset, 0)),
             reverse=True
-        )
+        )[:30]  # Return top 10 assets
 
         log_message(f"Ativos classificados por lucratividade e volume para negociações de 5 minutos: {sorted_assets[:100]}")
-        return sorted_assets[:100]  # Return top 100 assets
+        return sorted_assets[:30]  # Return top 10 assets
     except Exception as e:
         log_message(f"Erro ao buscar e classificar ativos: {e}")
         return []
-
+    
 def add_trade_to_list(trade_id):
     global trade_list
     trade_list.append(trade_id)
@@ -245,18 +245,6 @@ def reconnect_if_needed():
                 running = True
                 threading.Thread(target=execute_trades).start()  # Restart trading if it was stopped
 
-def fetch_historical_data(asset, duration, candle_count):
-    reconnect_if_needed()
-    if iq is None:
-        log_message(f"API desconectada. Não é possível buscar dados históricos para {asset}.")
-        return pd.DataFrame()  # Return an empty DataFrame if disconnected
-    candles = iq.get_candles(asset, duration * 60, candle_count, time.time())
-    df = pd.DataFrame(candles)
-    df["close"] = df["close"].astype(float)
-    df["open"] = df["open"].astype(float)
-    df["high"] = df["max"].astype(float)
-    df["low"] = df["min"].astype(float)
-    return df
 
 # Função para reconectar à API
 def reconnect():
@@ -298,310 +286,115 @@ def ignore_assets(asset):
         return True
     return asset.upper() in assets_to_ignore or "-CHIX" in asset.upper() or "XEMUSD-" in asset.upper() or "BSVUSD-" in asset.upper()
 
-def analyze_last_candles(data):
-    """
-    Analyzes the last 5 candles of 5 seconds each.
-    Returns 'up', 'down', or 'neutral' based on the analysis.
-    """
-    if len(data) < 5:
-        log_message("Dados insuficientes para análise dos últimos candles.")
-        return "neutral"
 
-    first_candle = data.iloc[-5]
-    if first_candle["close"] > first_candle["open"]:
-        return "up"
-    elif first_candle["close"] < first_candle["open"]:
-        return "down"
-    else:
-        return "neutral"
 
-def analyze_trend(asset):
-    """
-    Analyzes the trend based on the last 15 minutes of 1-minute candles.
-    Returns 'up', 'down', or 'neutral' based on the analysis.
-    """
-    data = fetch_historical_data(asset, 1, 15)
-    if data is None or data.empty:
-        log_message(f"Sem dados suficientes para análise de tendência de {asset}.")
-        return "neutral"
 
-    first_5_avg = data["close"].iloc[:5].mean()
-    middle_5_avg = data["close"].iloc[5:10].mean()
-    last_5_avg = data["close"].iloc[10:].mean()
-
-    if first_5_avg > middle_5_avg > last_5_avg:
-        return "down"
-    elif first_5_avg < middle_5_avg < last_5_avg:
-        return "up"
-    else:
-        return "neutral"
-
-def analyze_indicators(asset):
-    global invert_indicators  # Garante que a variável seja reconhecida
-
-    if ignore_assets(asset):
-        log_message(f"Ignorando ativo {asset}.")
-        return None
-
-    trend = analyze_trend(asset)
-    if trend == "neutral":
-        log_message(f"Mercado lateralizado para {asset}. Pulando ativo.")
-        return None
-
-    log_message(f"Analisando indicadores para {asset}...")
-    try:
-        data = fetch_historical_data(asset, 1, 100)
-
-        if data is None or data.empty:
-            log_message(f"Sem dados suficientes para {asset}. Pulando ativo.")
-            return None
-
-        indicators = {}
-        available_indicators = {
-            "rsi": lambda: ta.rsi(data["close"], length=14),
-            "macd": lambda: ta.macd(data["close"])["MACD_12_26_9"],
-            "ema": lambda: ta.ema(data["close"], length=9),
-            "sma": lambda: ta.sma(data["close"], length=20),
-            "stochastic": lambda: ta.stoch(data["high"], data["low"], data["close"])["STOCHk_14_3_3"],
-            "atr": lambda: ta.atr(data["high"], data["low"], data["close"], length=14),
-            "adx": lambda: ta.adx(data["high"], data["low"], data["close"], length=14),
-            "bollinger_high": lambda: ta.bbands(data["close"])["BBU_20_2.0"] if "BBU_20_2.0" in ta.bbands(data["close"]) else None,
-            "bollinger_low": lambda: ta.bbands(data["close"])["BBL_20_2.0"] if "BBL_20_2.0" in ta.bbands(data["close"]) else None,
-            "cci": lambda: ta.cci(data["high"], data["low"], data["close"], length=20),
-            "willr": lambda: ta.willr(data["high"], data["low"], data["close"], length=14),
-            "roc": lambda: ta.roc(data["close"], length=12),
-            "obv": lambda: ta.obv(data["close"], data["volume"]),
-            "trix": lambda: ta.trix(data["close"], length=15),
-            "mfi": lambda: ta.mfi(data["high"], data["low"], data["close"], data["volume"], length=14).astype(float),
-            "dpo": lambda: ta.dpo(data["close"], length=14),
-            "keltner_upper": lambda: ta.kc(data["high"], data["low"], data["close"], length=20)["KCUp_20_2.1"] if "KCUp_20_2.1" in ta.kc(data["high"], data["low"], data["close"], length=20) else None,
-            "keltner_lower": lambda: ta.kc(data["high"], data["low"], data["close"], length=20)["KCLo_20_2.1"] if "KCLo_20_2.1" in ta.kc(data["high"], data["low"], data["close"], length=20) else None,
-            "ultimate_oscillator": lambda: ta.uo(data["high"], data["low"], data["close"]),
-            "tsi": lambda: ta.tsi(data["close"]),
-            "aroon_up": lambda: ta.aroon(data["high"], data["low"], length=25)["AROONU_25"],
-            "aroon_down": lambda: ta.aroon(data["high"], data["low"], length=25)["AROOND_25"],
-            "last_candles": lambda: analyze_last_candles(data),
-        }
-
-        for key, func in available_indicators.items():
-            try:
-                result = func()
-                if result is not None and not isinstance(result, str) and not result.empty:
-                    indicators[key] = result.iloc[-1] if isinstance(result, pd.Series) else result
-            except Exception as e:
-                log_message(f"Erro ao calcular {key.upper()} para {asset}: {e}")
-                indicators[key] = None
-
-        # Coletar votos dos indicadores
-        buy_votes, sell_votes = 0, 0
-
-        if indicators.get("rsi") is not None:
-            if indicators["rsi"] < 30:
-                buy_votes += 1
-            elif indicators["rsi"] > 70:
-                sell_votes += 1
-
-        if indicators.get("macd") is not None:
-            if indicators["macd"] > 0:
-                buy_votes += 1
-            elif indicators["macd"] < 0:
-                sell_votes += 1
-
-        if indicators.get("ema") is not None:
-            if data["close"].iloc[-1] > indicators["ema"]:
-                buy_votes += 1
-            else:
-                sell_votes += 1
-
-        if indicators.get("sma") is not None:
-            if data["close"].iloc[-1] > indicators["sma"]:
-                buy_votes += 1
-            else:
-                sell_votes += 1
-
-        if indicators.get("stochastic") is not None:
-            if indicators["stochastic"] < 20:
-                buy_votes += 1
-            elif indicators["stochastic"] > 80:
-                sell_votes += 1
-
-        if indicators.get("bollinger_low") is not None and indicators.get("bollinger_high") is not None:
-            if data["close"].iloc[-1] < indicators["bollinger_low"]:
-                buy_votes += 1
-            elif data["close"].iloc[-1] > indicators["bollinger_high"]:
-                sell_votes += 1
-
-        if indicators.get("cci") is not None:
-            if indicators["cci"] < -100:
-                buy_votes += 1
-            elif indicators["cci"] > 100:
-                sell_votes += 1
-
-        # Inverter sinais no terceiro Martingale
-        if invert_indicators:
-            log_message("Invertendo sinais devido ao terceiro Martingale.")
-            buy_votes, sell_votes = sell_votes, buy_votes
-
-        total_votes = buy_votes + sell_votes
-        majority = (total_votes // 2) + 2  # Atualizando para 50% + 2 votos
-
-        log_message(f"Votos finais para {asset}: BUY={buy_votes}, SELL={sell_votes}, Total={total_votes}, Necessário={majority}")
-
-        # Decisão final baseada nos votos
-        if buy_votes >= majority:
-            return "buy"
-        elif sell_votes >= majority:
-            return "sell"
-        else:
-            log_message("Consenso insuficiente entre os indicadores. Pulando ativo.")
-            return None
-
-    except Exception as e:
-        log_message(f"Erro ao analisar indicadores para {asset}: {e}")
-        return None
-
+# Função de contagem regressiva
 def countdown(seconds):
     while seconds > 0:
         log_message(f"Aguardando {seconds} segundos...")
         time.sleep(1)
         seconds -= 1
 
-# Parâmetro de diferença mínima, perda máxima e probabilidade mínima
-MIN_DIFFERENCE = 0.0005
-MAX_LOSS = 0.0010
-MIN_PROBABILITY = 0.6
 
-def calculate_volatility(data):
-    """
-    Calculate the volatility of the asset based on historical data.
-    """
-    data['returns'] = data['close'].pct_change()
-    volatility = data['returns'].std() * (252 ** 0.5)  # Annualized volatility
-    return volatility
-
-def is_high_volatility(asset):
-    """
-    Determine if the asset has high volatility.
-    """
-    data = fetch_historical_data(asset, 1, 20)  # Fetch last 20 candles of 1 minute each
-    if data is None or data.empty:
-        log_message(f"Sem dados suficientes para {asset}. Pulando ativo.")
-        return False
-
-    volatility = calculate_volatility(data)
-    log_message(f"Volatilidade calculada para {asset}: {volatility:.2f}")
-    return volatility > 0.05  # Example threshold for high volatility
-
-def should_open_trade(opening_price, closing_price, min_difference):
-    """
-    Determine if a trade should be opened based on the price difference.
-    """
-    price_difference = abs(opening_price - closing_price)
-    if price_difference < min_difference:
-        log_message(f"Preço de abertura: {opening_price}, Preço de fechamento: {closing_price}, Diferença: {price_difference}")
-        return False
-    return True
-
-# Adapted execute_trades function
+# Função principal de execução de trades
 def execute_trades():
-    global running
-    global current_amount
-    global consecutive_losses
-    global session_profit
-    global simultaneous_trades
-    global saldo_entrada
-
+    global running, current_amount, consecutive_losses, session_profit, simultaneous_trades, saldo_entrada
     while running:
-        log_message("Executando negociações...")
-        assets = fetch_sorted_assets()
+        reconnect_if_needed()
+        if iq is None or not iq.check_connect():
+            log_message("Erro: API desconectada. Tentando reconectar em 10 segundos...")
+            time.sleep(10)
+            continue
 
-        if not assets:
-            log_message("Nenhum ativo encontrado. Parando execução.")
-            break
+        # Se já houve perdas consecutivas (modo martingale), busca os melhores ativos para o trade
+        if consecutive_losses > 0:
+            best_assets = fetch_sorted_assets()
+            if best_assets:
+                asset_list = [best_assets[0]]
+                log_message(f"Modo martingale: selecionado o melhor ativo {best_assets[0]}")
+            else:
+                log_message("Nenhum ativo classificado disponível para martingale. Aguardando...")
+                time.sleep(10)
+                continue
+        else:
+            asset_list = list(iq.get_all_ACTIVES_OPCODE().keys())
+            if not asset_list:
+                log_message("Nenhum ativo encontrado. Tentando novamente em 10 segundos...")
+                time.sleep(10)
+                continue
 
-        for asset in assets:
+        for asset in asset_list:
             if not running:
                 log_message("Execução de negociações interrompida.")
                 break
 
-            if ignore_assets(asset):
-                log_message(f"Ignorando ativo {asset}.")
-                continue
-
+            # Limita a execução a uma única transação simultânea
             if simultaneous_trades >= max_simultaneous_trades:
-                log_message("Número máximo de negociações simultâneas atingido. Aguardando...")
-                countdown(50)  # Adjusted countdown for 5-minute trades
-                
-                update_session_profit()
+                log_message("Uma transação já está em andamento. Aguardando a finalização da transação atual...")
+                time.sleep(1)
                 continue
 
-            # Ensure results are checked periodically and reset amount if needed
-            
-            update_session_profit()
-
-            if is_high_volatility(asset):
-                log_message(f"Alta volatilidade detectada para {asset}. Pulando ativo.")
+            reconnect_if_needed()
+            if iq is None or not iq.check_connect():
+                log_message("API desconectada. Pulando ativo.")
                 continue
 
-            decision = analyze_indicators(asset)
-            if decision == "buy":
-                action = "call"
-            elif decision == "sell":
-                action = "put"
-            else:
-                log_message(f"Pulando negociação para {asset}. Sem consenso ou tendência contrária.")
+            decision = predict_trade_direction(asset)
+            if not decision:
+                log_message(f"Pulando negociação para {asset}. Sem decisão clara.")
                 continue
 
-            log_message(f"Tentando realizar negociação: Ativo={asset}, Ação={action}, Valor = R${current_amount}")
-            saldo_entrada = iq.get_balance()  # Store balance before trade
-            print(f"Balance before opening trade: {saldo_entrada}")  # Display balance before trade
+            action = "call" if decision == "buy" else "put"
 
-            # Verificar a disponibilidade do ativo antes de tentar negociar
+            if iq is None or not iq.check_connect():
+                log_message("API desconectada antes de abrir a negociação. Tentando reconectar...")
+                reconnect_if_needed()
+                if iq is None or not iq.check_connect():
+                    log_message("Falha na reconexão. Pulando ativo.")
+                    continue
+
+            saldo_entrada = iq.get_balance()
+            log_message(f"Saldo antes da negociação: R${saldo_entrada}")
             available_assets = iq.get_all_ACTIVES_OPCODE()
             if asset not in available_assets:
                 log_message(f"Ativo {asset} não encontrado na plataforma. Pulando ativo.")
                 continue
 
             try:
-                success, trade_id = iq.buy(current_amount, asset, action, 5)  # Negociações de 5 minutos
+                # Duração do trade definida para 1 minuto
+                success, trade_id = iq.buy(current_amount, asset, action, 1)
                 if success:
                     simultaneous_trades += 1
-                    add_trade_to_list(trade_id)
+                    trade_list.append(trade_id)
                     log_message(f"Negociação realizada com sucesso para {asset}. ID da negociação={trade_id}")
-                    print(f"Balance after opening trade: {iq.get_balance()}")  # Display balance after opening trade
+                    log_message(f"Saldo após abertura da negociação: R${iq.get_balance()}")
                     threading.Thread(target=monitor_trade, args=(trade_id, asset)).start()
                 else:
-                    log_message(f"Falha ao realizar negociação para {asset}. Motivo: {trade_id}")  # Log the reason for failure
+                    log_message(f"Falha ao realizar negociação para {asset}. Motivo: {trade_id}")
             except Exception as e:
                 log_message(f"Erro durante a execução da negociação para {asset}: {e}")
-                if "WinError 10054" in str(e):
-                    log_message("Conexão perdida. Tentando reconectar...")
-                    reconnect_if_needed()
-                    if iq and iq.check_connect():
-                        log_message("Reconexão bem-sucedida. Continuando operações.")
-                        continue
-                    else:
-                        log_message("Falha na reconexão. Parando operações.")
-                        running = False
-                        break
+                reconnect_if_needed()
+                if iq is None or not iq.check_connect():
+                    log_message("Falha na reconexão. Parando operações.")
+                    running = False
+                    break
 
-        # Ensure results are checked periodically
-        
-        update_session_profit()
+        log_message("Todos os ativos processados. Buscando nova lista de ativos...")
+       
+        update_balance()
+        time.sleep(5)
 
-        if smart_stop and current_amount == initial_amount:
-            running = False
-            log_message("Smart Stop ativado. Parando execução após reset para valor inicial.")
-            break
 
+# Monitora uma negociação e aplica a estratégia de Martingale
 def monitor_trade(trade_id, asset):
     global simultaneous_trades
     global session_profit
     global consecutive_losses
     global current_amount
     global saldo_saida
+    global amount_doubled
     global last_trade_asset  # Armazena o último ativo para o Martingale
-    global invert_indicators  # Flag para inversão dos indicadores
 
     try:
         print(f"Monitorando negociação {trade_id} para o ativo {asset}...")
@@ -635,37 +428,33 @@ def monitor_trade(trade_id, asset):
 
         update_session_profit()
 
-        if result <= 0:  # LOSS
+        if result <= 0:
             consecutive_losses += 1
 
-            if consecutive_losses >= 5:  # Reseta após 5 losses
-                log_message("Limite de 5 Martingale atingido. Resetando valor inicial e restaurando indicadores.")
+            if consecutive_losses >= 5:  # Agora reseta só após 5 losses
+                log_message("Limite de 5 Martingale atingido. Resetando valor inicial.")
                 consecutive_losses = 0
-                invert_indicators = False  # Restaurando a lógica normal dos indicadores
                 set_amount()  # Retorna ao valor inicial
+                amount_doubled = False
                 last_trade_asset = None  # Não mantém o mesmo ativo após reset
 
             else:
                 log_message(f"Perda consecutiva #{consecutive_losses}. Aplicando Martingale no mesmo ativo: {asset}")
 
-                # Aplica Martingale dobrando o valor baseado no número de perdas
-                current_amount = initial_amount * (2 ** consecutive_losses)
-                last_trade_asset = asset  # Mantém o mesmo ativo para a próxima tentativa
+                if not amount_doubled:
+                    current_amount *= 2
+                    amount_doubled = True
+                    last_trade_asset = asset  # Mantém o mesmo ativo para a próxima tentativa
 
-                # Inverte os indicadores a partir do terceiro Martingale
-                if consecutive_losses == 3:
-                    log_message("Terceiro Martingale - Invertendo lógica dos indicadores.")
-                    invert_indicators = True
+                    log_message(f"Dobrou valor para Martingale. Próxima negociação: R${current_amount} no ativo {last_trade_asset}")
 
-                log_message(f"Dobrou valor para Martingale. Próxima negociação: R${current_amount} no ativo {last_trade_asset}")
-
-        else:  # WIN
+        else:
             consecutive_losses = 0
-            invert_indicators = False  # Restaura os indicadores ao normal
             set_amount()  # Reseta para valor inicial após um WIN
+            amount_doubled = False
             last_trade_asset = None  # Não mantém o ativo após um WIN
 
-            log_message("Negociação vitoriosa. Resetando valores e restaurando indicadores.")
+            log_message("Negociação vitoriosa. Resetando valores.")
 
     finally:
         simultaneous_trades -= 1
@@ -681,11 +470,13 @@ def update_session_profit():
 # Função para iniciar a execução de trades
 def start_trading():
     global running
+    
     if not running:
         running = True
         icon_label.config(image=rotating_icon)
         log_message("Starting trading session...")
         threading.Thread(target=execute_trades).start()
+    
 
 # Função para parar a execução de trades
 def stop_trading():
@@ -710,24 +501,22 @@ def update_log():
         root.after(1000, update_log)
 
 # Update the set_amount function to use 5% of the account balance
+
+# Define o valor inicial do trade com base no saldo
 def set_amount():
-    global initial_amount
-    global current_amount
+    global initial_amount, current_amount
     balance = iq.get_balance()
-    initial_amount = 2  # Set to 2 reais pq é o que tem
-    # initial_amount = balance * 0.02  # Set to 2% of the balance
-    # initial_amount = balance * 0.1  # Set to 10% of the balance for testing
+    initial_amount = balance * 0.02  # 2% do saldo; ajuste conforme necessário
+    # initial_amount = 2  # Alterado para 2 por foda-se
     current_amount = initial_amount
-    log_message(f"Initial amount set to 2% of balance: R${initial_amount:.2f}")
-    balance_label.config(text=f"Balance: R${balance:.2f}")
-    update_martingale_label()  # Update Martingale label
+    log_message(f"Valor inicial definido: R${initial_amount:.2f}")
 
 # Function to update the Martingale label
 def update_martingale_label():
     if current_amount > initial_amount:
         martingale_label.config(text="M", fg="red")
     else:
-        martingale_label.config(text="M", fg="#000000")  # Same color as the background
+        martingale_label.config(text="M", fg="#084d18")  # Same color as the background
 
 # Function to stop and start trading if the code freezes for more than 15 seconds
 def watchdog():
@@ -745,41 +534,41 @@ def watchdog():
 
 # Start the watchdog thread
 threading.Thread(target=watchdog, daemon=True).start()
-
+#-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*
 # GUI Configuration
 root = tk.Tk()
-root.title(f"Capybara v7.7 - Conta: {account_type} - {email}")
-root.configure(bg="#000000")
+root.title(f"IrishSonic v0.1 - Full Aleatório - Conta: {account_type} - {email}")
+root.configure(bg="#084d18")
 
 static_icon = PhotoImage(file="static_icon.png")
-rotating_icon = PhotoImage(file="working_capy.png")
-icon_label = tk.Label(root, image=static_icon, bg="#000000")
+rotating_icon = PhotoImage(file="working_sonic.png")
+icon_label = tk.Label(root, image=static_icon, bg="#084d18")
 icon_label.grid(row=0, column=0, rowspan=2, padx=10, pady=10)
 
 stop_button = tk.Button(root, text="Smart Stop", command=stop_trading, bg="#F44336", fg="white", font=("Helvetica", 12))
 stop_button.grid(row=0, column=1, padx=5, pady=5)
 
-balance_label = tk.Label(root, text="Balance: R$0.00", bg="#000000", fg="white", font=("Helvetica", 12))
+balance_label = tk.Label(root, text="Balance: R$0.00", bg="#084d18", fg="white", font=("Helvetica", 12))
 balance_label.grid(row=1, column=1, columnspan=2, padx=5, pady=5)
 
 # Add Martingale label
-martingale_label = tk.Label(root, text="M", bg="#000000", fg="#000000", font=("Helvetica", 12))
+martingale_label = tk.Label(root, text="M", bg="#084d18", fg="#084d18", font=("Helvetica", 12))
 martingale_label.grid(row=1, column=3, padx=5, pady=5)
 
-log_text = ScrolledText(root, height=10, font=("Courier", 10), bg="#000000", fg="white")
+log_text = ScrolledText(root, height=10, font=("Courier", 10), bg="#084d18", fg="white")
 log_text.grid(row=3, column=0, columnspan=5, padx=10, pady=10)
 
 # Redirect stdout and stderr to the log_text widget
 sys.stdout = TextRedirector(log_text, "stdout")
 sys.stderr = TextRedirector(log_text, "stderr")
 
-profit_label = tk.Label(root, text="Lucro: R$0.00", font=("Helvetica", 16), bg="#000000", fg="white")
+profit_label = tk.Label(root, text="Lucro: R$0.00", font=("Helvetica", 16), bg="#084d18", fg="white")
 profit_label.grid(row=4, column=0, columnspan=5, padx=10, pady=10)
 
 footer_label = tk.Label(
     root,
      text="@oedlopes - 2025  - Deus Seja Louvado - Sola Scriptura - Sola Fide - Solus Christus - Sola Gratia - Soli Deo Gloria",
-    bg="#000000",
+    bg="#084d18",
     fg="#A9A9A9",
     font=("Helvetica", 7)
 )
@@ -792,7 +581,7 @@ update_session_profit()
 start_trading()
 
 root.mainloop()
-
+#-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*
 def update_open_trades_label():
     if running:
         root.after(1000, update_open_trades_label)
@@ -818,8 +607,8 @@ def simulate_trade(success):
     else:
         log_message(f"Trade failed. Amount: ${current_amount}")
         consecutive_losses += 1
-        if consecutive_losses <= martingale_limit and not amount_doubled:
-            current_amount *= 2  # Correctly double the amount
+        if consecutive_losses < martingale_limit and not amount_doubled:
+            current_amount *= 2  # Dobrar apenas uma vez
             amount_doubled = True
         else:
             log_message("Martingale limit reached or amount already doubled. Resetting to initial amount.")
@@ -827,62 +616,17 @@ def simulate_trade(success):
             current_amount = initial_amount
             amount_doubled = False
 
-# Teste da lógica de Martingale
-def test_martingale_logic():
-    global current_amount, consecutive_losses, amount_doubled
 
-    # Resetar variáveis
-    current_amount = initial_amount
-    consecutive_losses = 0
-    amount_doubled = False
-
-    # Simular uma série de negociações
-    simulate_trade(False)  # Falha
-    assert current_amount == initial_amount * 2, f"Expected {initial_amount * 2}, got {current_amount}"
-    assert amount_doubled == True, "Expected amount_doubled to be True"
-
-    simulate_trade(False)  # Falha
-    assert current_amount == initial_amount * 4, f"Expected {initial_amount * 4}, got {current_amount}"
-    assert amount_doubled == True, "Expected amount_doubled to be True"
-
-    simulate_trade(True)  # Sucesso
-    assert current_amount == initial_amount, f"Expected {initial_amount}, got {current_amount}"
-    assert amount_doubled == False, "Expected amount_doubled to be False"
-
-    simulate_trade(False)  # Falha
-    assert current_amount == initial_amount * 2, f"Expected {initial_amount * 2}, got {current_amount}"
-    assert amount_doubled == True, "Expected amount_doubled to be True"
-
-    simulate_trade(False)  # Falha
-    assert current_amount == initial_amount * 4, f"Expected {initial_amount * 4}, got {current_amount}"
-    assert amount_doubled == True, "Expected amount_doubled to be True"
-
-    simulate_trade(False)  # Falha
-    assert current_amount == initial_amount * 8, f"Expected {initial_amount * 8}, got {current_amount}"
-    assert amount_doubled == True, "Expected amount_doubled to be True"
-
-    simulate_trade(False)  # Falha
-    assert current_amount == initial_amount * 16, f"Expected {initial_amount * 16}, got {current_amount}"
-    assert amount_doubled == True, "Expected amount_doubled to be True"
-
-    simulate_trade(False)  # Falha
-    assert current_amount == initial_amount, f"Expected {initial_amount}, got {current_amount}"
-    assert amount_doubled == False, "Expected amount_doubled to be False"
-
-    log_message("Martingale logic test completed successfully.")
-
-# Executar o teste
-test_martingale_logic()
 
 # Configuração da GUI
 root = tk.Tk()
 root.title("Capybara v7.7")
-root.configure(bg="#000000")
+root.configure(bg="#084d18")
 
 
 static_icon = PhotoImage(file="static_icon.png")
 rotating_icon = PhotoImage(file="working_capy.png")
-icon_label = tk.Label(root, image=static_icon, bg="#000000")
+icon_label = tk.Label(root, image=static_icon, bg="#084d18")
 icon_label.grid(row=0, column=0, rowspan=2, padx=10, pady=10)
 
 start_button = tk.Button(root, text="Start", command=start_trading, bg="#4CAF50", fg="white", font=("Helvetica", 12))
@@ -891,7 +635,7 @@ start_button.grid(row=0, column=1, padx=5, pady=5)
 stop_button = tk.Button(root, text="Stop", command=stop_trading, bg="#F44336", fg="white", font=("Helvetica", 12))
 stop_button.grid(row=0, column=2, padx=5, pady=5)
 
-amount_label = tk.Label(root, text="Initial Amount:", bg="#000000", fg="white", font=("Helvetica", 12))
+amount_label = tk.Label(root, text="Initial Amount:", bg="#084d18", fg="white", font=("Helvetica", 12))
 amount_label.grid(row=1, column=1, padx=5, pady=5)
 
 amount_entry = tk.Entry(root, font=("Helvetica", 12))
@@ -901,17 +645,17 @@ amount_entry.grid(row=1, column=2, padx=5, pady=5)
 set_button = tk.Button(root, text="Set Amount", command=lambda: set_amount(float(amount_entry.get())), bg="#FFC107", fg="black", font=("Helvetica", 12))
 set_button.grid(row=1, column=3, padx=5, pady=5)
 
-log_text = ScrolledText(root, height=10, font=("Courier", 10), bg="#000000", fg="white")
+log_text = ScrolledText(root, height=10, font=("Courier", 10), bg="#084d18", fg="white")
 log_text.grid(row=2, column=0, columnspan=5, padx=10, pady=10)
 
-profit_label = tk.Label(root, text="Lucro: R$0.00", font=("Helvetica", 16), bg="#000000", fg="white")
+profit_label = tk.Label(root, text="Lucro: R$0.00", font=("Helvetica", 16), bg="#084d18", fg="white")
 profit_label.grid(row=3, column=0, columnspan=5, padx=10, pady=10)
 
 # Rodapé
 footer_label = tk.Label(
     root,
     text="@oedlopes - 2025  - Deus seja louvado",
-    bg="#000000",
+    bg="#084d18",
     fg="#A9A9A9",
     font=("Helvetica", 8)
 )
@@ -925,46 +669,6 @@ if invalid_credentials:
     log_text.insert(tk.END, "Invalid credentials. Please check the credentials.txt file.\n")
 
 root.mainloop()
-
-def calculate_success_probability(asset, direction):
-    """
-    Calculate the probability of success based on technical indicators.
-    """
-    data = fetch_historical_data(asset, 1, 100)  # Fetch last 100 candles of 1 minute each
-
-    if data is None or data.empty:
-        log_message(f"Sem dados suficientes para {asset}. Pulando ativo.")
-        return 0.0
-
-    # Ensure all columns are cast to compatible dtypes
-    data["close"] = data["close"].astype(float)
-    data["open"] = data["open"].astype(float)
-    data["high"] = data["high"].astype(float)
-    data["low"] = data["low"].astype(float)
-    if "volume" in data.columns:
-        data["volume"] = data["volume"].astype(float)
-
-    # Calculate technical indicators
-    volume = data["volume"].iloc[-1]
-    candle_strength = (data["close"].iloc[-1] - data["open"].iloc[-1]) / (data["high"].iloc[-1] - data["low"].iloc[-1])
-    speed = (data["close"].iloc[-1] - data["close"].iloc[-2]) / data["close"].iloc[-2]
-    popularity = volume / data["volume"].mean()
-
-    # Combine indicators to calculate probability
-    probability = 0.25 * volume + 0.25 * candle_strength + 0.25 * speed + 0.25 * popularity
-
-    log_message(f"Probabilidade calculada para {asset}: {probability:.2f}")
-    return probability
-
-def should_open_trade(opening_price, closing_price, min_difference):
-    """
-    Determine if a trade should be opened based on the price difference.
-    """
-    price_difference = abs(opening_price - closing_price)
-    if price_difference < min_difference:
-        log_message(f"Preço de abertura: {opening_price}, Preço de fechamento: {closing_price}, Diferença: {price_difference}")
-        return False
-    return True
 
 def save_console_output():
     current_date = time.strftime("%Y-%m-%d")
@@ -983,6 +687,7 @@ def schedule_daily_save():
 
 # Call the schedule_daily_save function to start the daily saving process
 schedule_daily_save()
+
 
 
 # Ensure balance is fetched and initial amount is set at the start

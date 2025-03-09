@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-# Arquivo: Capybara.7.7.py
+# Arquivo: Capybara.9.0.py
 #PECUNIA IMPROMPTA
 #Código construido com Copilot e otimizado utilizando DeepSeek, o ChatGPT de flango.
 from iqoptionapi.stable_api import IQ_Option
@@ -290,6 +290,7 @@ def reconnect():
 if __name__ == "__main__":
     threading.Thread(target=reconnect, daemon=True).start()
 
+
 # Define the ignore_assets function
 assets_to_ignore = set(["MSFT","AUDMXN","CSGNZ-CHIX","TA25","DUBAI","YAHOO", "TWITTER", "AGN:US", "CXO:US","DNB:US","DOW:US","DTE:US","DUK:US","DVA:US","DVN:US","DXC:US","DXCM:US", "ETFC:US", "TWX:US"])
 
@@ -443,7 +444,7 @@ def analyze_indicators(asset):
             buy_votes, sell_votes = sell_votes, buy_votes
 
         total_votes = buy_votes + sell_votes
-        majority = (total_votes // 2) + 2  # Atualizando para 50% + 2 votos
+        majority = (total_votes // 2) + 1  # Atualizando para 50% + 1 votos
 
         log_message(f"Votos finais para {asset}: BUY={buy_votes}, SELL={sell_votes}, Total={total_votes}, Necessário={majority}")
 
@@ -595,16 +596,9 @@ def execute_trades():
             break
 
 def monitor_trade(trade_id, asset):
-    global simultaneous_trades
-    global session_profit
-    global consecutive_losses
-    global current_amount
-    global saldo_saida
-    global last_trade_asset  # Armazena o último ativo para o Martingale
-    global invert_indicators  # Flag para inversão dos indicadores
+    global simultaneous_trades, session_profit, consecutive_losses, current_amount, saldo_saida, last_trade_asset, invert_indicators
 
     try:
-        print(f"Monitorando negociação {trade_id} para o ativo {asset}...")
         log_message(f"Monitorando negociação {trade_id} para o ativo {asset}...")
 
         result = None
@@ -612,24 +606,14 @@ def monitor_trade(trade_id, asset):
             try:
                 result = iq.check_win_v4(trade_id)
                 if result is None:
-                    print(f"Negociação {trade_id} ainda não concluída. Tentando novamente em 1 segundo...")
                     time.sleep(1)
             except Exception as e:
                 log_message(f"Erro ao verificar status da negociação {trade_id}: {e}")
                 time.sleep(1)
 
-        # Converte o resultado para float se necessário
-        if isinstance(result, tuple):
-            result = result[0]
-        if isinstance(result, str):
-            try:
-                result = float(result)
-            except ValueError:
-                log_message(f"Erro ao converter resultado: {result}")
-                result = 0.0
-
+        result = float(result) if isinstance(result, (int, float, str)) else 0.0
         session_profit += result
-        saldo_saida = iq.get_balance()  # Atualiza saldo após a negociação
+        saldo_saida = iq.get_balance()
 
         log_message(f"Resultado da negociação {trade_id} ({asset}): {'WIN' if result > 0 else 'LOSS'}, Lucro={result}")
 
@@ -638,40 +622,36 @@ def monitor_trade(trade_id, asset):
         if result <= 0:  # LOSS
             consecutive_losses += 1
 
-            if consecutive_losses >= 5:  # Reseta após 5 losses
-                log_message("Limite de 5 Martingale atingido. Resetando valor inicial e restaurando indicadores.")
-                consecutive_losses = 0
-                invert_indicators = False  # Restaurando a lógica normal dos indicadores
-                set_amount()  # Retorna ao valor inicial
-                last_trade_asset = None  # Não mantém o mesmo ativo após reset
-
+            if martingale_enabled.get():  # Verifica se o Martingale está ativado
+                if consecutive_losses >= 5:
+                    log_message("Limite de 5 Martingale atingido. Resetando valor inicial e restaurando indicadores.")
+                    consecutive_losses = 0
+                    invert_indicators = False
+                    set_amount()
+                    last_trade_asset = None
+                else:
+                    log_message(f"Perda consecutiva #{consecutive_losses}. Aplicando Martingale no ativo: {asset}")
+                    current_amount = initial_amount * (2 ** consecutive_losses)
+                    last_trade_asset = asset
+                    if consecutive_losses == 3:
+                        log_message("Terceiro Martingale - Invertendo lógica dos indicadores.")
+                        invert_indicators = True
+                    log_message(f"Dobrou valor para Martingale. Próxima negociação: R${current_amount} no ativo {last_trade_asset}")
             else:
-                log_message(f"Perda consecutiva #{consecutive_losses}. Aplicando Martingale no mesmo ativo: {asset}")
-
-                # Aplica Martingale dobrando o valor baseado no número de perdas
-                current_amount = initial_amount * (2 ** consecutive_losses)
-                last_trade_asset = asset  # Mantém o mesmo ativo para a próxima tentativa
-
-                # Inverte os indicadores a partir do terceiro Martingale
-                if consecutive_losses == 3:
-                    log_message("Terceiro Martingale - Invertendo lógica dos indicadores.")
-                    invert_indicators = True
-
-                log_message(f"Dobrou valor para Martingale. Próxima negociação: R${current_amount} no ativo {last_trade_asset}")
-
-        else:  # WIN
+                log_message("Martingale desativado. Mantendo valor inicial.")
+                consecutive_losses = 0
+                set_amount()
+        else:
             consecutive_losses = 0
-            invert_indicators = False  # Restaura os indicadores ao normal
-            set_amount()  # Reseta para valor inicial após um WIN
-            last_trade_asset = None  # Não mantém o ativo após um WIN
-
+            invert_indicators = False
+            set_amount()
+            last_trade_asset = None
             log_message("Negociação vitoriosa. Resetando valores e restaurando indicadores.")
 
     finally:
         simultaneous_trades -= 1
         if trade_id in trade_list:
             trade_list.remove(trade_id)
-
 
 def update_session_profit():
     global saldo_entrada, saldo_saida, session_profit
@@ -743,12 +723,14 @@ def watchdog():
             start_trading()
         last_check = time.time()
 
+
+
 # Start the watchdog thread
 threading.Thread(target=watchdog, daemon=True).start()
 
 # GUI Configuration
 root = tk.Tk()
-root.title(f"Capybara v7.7 - Conta: {account_type} - {email}")
+root.title(f"Capybara v9.0 - Conta: {account_type} - {email}")
 root.configure(bg="#000000")
 
 static_icon = PhotoImage(file="static_icon.png")
@@ -785,6 +767,27 @@ footer_label = tk.Label(
 )
 footer_label.grid(row=5, column=0, columnspan=4, padx=10, pady=5, sticky="nsew")
 #À∴G∴D∴G∴A∴D∴U∴
+
+# Variável para controlar o estado do Martingale
+martingale_enabled = tk.BooleanVar(value=True)
+
+# Função para alternar Martingale
+def toggle_martingale():
+    global martingale_enabled
+    log_message(f"Martingale {'ativado' if martingale_enabled.get() else 'desativado'}.")
+
+# Criando o switch para ativar/desativar Martingale
+martingale_switch = tk.Checkbutton(
+    root,
+    text="Ativar Martingale",
+    variable=martingale_enabled,
+    command=toggle_martingale,
+    bg="#000000",
+    fg="white",
+    font=("Helvetica", 12),
+    selectcolor="#000000"
+)
+martingale_switch.grid(row=1, column=4, padx=5, pady=5)
 update_log()
 update_session_profit()
 

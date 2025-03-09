@@ -19,7 +19,7 @@ if errorlevel 1 goto launch
 :launch
 echo Lançando %instances% instâncias...
 for /l %%i in (1,1,%instances%) do (
-    start cmd /c python Capybara_AI.0.6.py
+    start cmd /c python Capybara.9.0.py
     timeout /t 120 /nobreak >nul
 )
 pause
