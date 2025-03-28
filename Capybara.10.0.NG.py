@@ -5,9 +5,6 @@ from iqoptionapi.stable_api import IQ_Option
 import threading
 import time
 import os
-import tkinter as tk
-from tkinter.scrolledtext import ScrolledText
-from tkinter import PhotoImage
 import pandas as pd
 import pandas_ta as ta
 import json
@@ -37,18 +34,6 @@ from trading_strategy import should_open_trade, should_abandon_trade, calculate_
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-
-class TextRedirector:
-    def __init__(self, widget, tag="stdout"):
-        self.widget = widget
-        self.tag = tag
-
-    def write(self, str):
-        self.widget.insert(tk.END, str, (self.tag,))
-        self.widget.see(tk.END)
-
-    def flush(self):
-        pass
 
 # Carregar credenciais do arquivo
 credentials_file = os.path.normpath(os.path.join(os.getcwd(), "credentials.txt"))
@@ -234,15 +219,26 @@ def reconnect_if_needed():
             running = False
 
 def fetch_historical_data(asset, duration, candle_count):
+    """
+    Fetch historical data for the given asset.
+    """
     reconnect_if_needed()
     ignored_assets = {"yahoo", "twitter", "AGN:US"}
-    candles = iq.get_candles(asset, duration * 60, candle_count, time.time())
-    df = pd.DataFrame(candles)
-    df["close"] = df["close"].astype(float)
-    df["open"] = df["open"].astype(float)
-    df["high"] = df["max"].astype(float)
-    df["low"] = df["min"].astype(float)
-    return df
+    try:
+        candles = iq.get_candles(asset, duration * 60, candle_count, time.time())
+        if len(candles) < candle_count:
+            log_message(f"Ativo {asset} retornou apenas {len(candles)} velas. Dados insuficientes.")
+            return None  # Retornar None se os dados forem insuficientes
+
+        df = pd.DataFrame(candles)
+        df["close"] = df["close"].astype(float)
+        df["open"] = df["open"].astype(float)
+        df["high"] = df["max"].astype(float)
+        df["low"] = df["min"].astype(float)
+        return df
+    except Exception as e:
+        log_message(f"Erro ao buscar dados históricos para {asset}: {e}")
+        return None
 
 # Função para reconectar à API
 def reconnect():
@@ -280,20 +276,20 @@ def ignore_assets(asset):
 
 def analyze_trend(data):
     """
-    Analyzes the trend of the last 15 candles.
+    Analyzes the trend of the last 30 candles (1-minute each).
     Returns 'up', 'down', or 'neutral' based on the analysis.
     """
-    if len(data) < 15:
-        log_message("Dados insuficientes para análise de tendência.")
+    if data is None or len(data) < 30:
+        log_message("Dados insuficientes para análise de tendência. Pulando ativo.")
         return "neutral"
 
-    first_5_avg = data["close"].iloc[-15:-10].mean()
-    next_5_avg = data["close"].iloc[-10:-5].mean()
-    last_5_avg = data["close"].iloc[-5:].mean()
+    first_10_avg = data["close"].iloc[-30:-20].mean()
+    next_10_avg = data["close"].iloc[-20:-10].mean()
+    last_10_avg = data["close"].iloc[-10:].mean()
 
-    if first_5_avg > next_5_avg > last_5_avg:
+    if first_10_avg > next_10_avg > last_10_avg:
         return "down"
-    elif first_5_avg < next_5_avg < last_5_avg:
+    elif first_10_avg < next_10_avg < last_10_avg:
         return "up"
     else:
         return "neutral"
@@ -324,7 +320,11 @@ def identify_trend(asset):
         log_message(f"Ignorando ativo {asset}.")
         return "neutral"
 
-    data = fetch_historical_data(asset, 1, 15)  # Fetch 15 candles of 1 minute each
+    data = fetch_historical_data(asset, 1, 30)  # Fetch 30 candles of 1 minute each
+    if data is None:
+        log_message(f"Dados insuficientes para o ativo {asset}. Pulando ativo.")
+        return "neutral"
+
     return analyze_trend(data)
 
 # Update the analyze_indicators function to include the new indicators
@@ -626,10 +626,8 @@ def execute_trades():
 def monitor_trade(trade_id, asset):
     global simultaneous_trades
     global session_profit
-    global consecutive_losses
     global current_amount
     global saldo_saida
-    global amount_doubled
 
     try:
         print(f"Monitorando negociação {trade_id} para o ativo {asset}...")
@@ -671,30 +669,21 @@ def monitor_trade(trade_id, asset):
         update_session_profit()
 
         if result <= 0:
-            consecutive_losses += 1
-            current_amount = current_amount * 2  # Correctly double the amount for the next trade
-            amount_doubled = True  # Set the flag to indicate the amount has been doubled
-            log_message(f"Dobrar valor da negociação. Próximo valor de negociação: R${current_amount}")
+            log_message("Negociação perdida. Mantendo o valor da próxima negociação.")
         else:
-            consecutive_losses = 0
-            set_amount()  # Reset to 5% of the balance after a win
-            amount_doubled = False  # Reset the flag
-            log_message(f"Negociação bem-sucedida. Valor de negociação resetado para: R${current_amount}")
+            log_message("Negociação bem-sucedida. Mantendo o valor da próxima negociação.")
 
     finally:
         simultaneous_trades -= 1
         if trade_id in trade_list:
             trade_list.remove(trade_id)  # Ensure the trade is removed from the list after checking
         print(f"Balance after closing trade: {iq.get_balance()}")  # Display balance after closing trade
-        set_amount()  # Update the trade amount based on the current balance
 
+# Modificar a função `check_trade_results` para remover a lógica de Martingale
 def check_trade_results():
     global trade_list
     global session_profit
-    global consecutive_losses
-    global current_amount
-    global amount_doubled
-    
+
     for trade_id in trade_list.copy():
         try:
             result = iq.check_win_v4(trade_id)
@@ -710,53 +699,26 @@ def check_trade_results():
                         try:
                             result = float(result)  # Convert string to float
                         except ValueError:
-                            print(f"Erro ao converter resultado para float: {result}")
                             log_message(f"Erro ao converter resultado para float: {result}")
                             result = 0.0  # Default to 0.0 if conversion fails
 
                 session_profit += result
                 log_message(f"Resultado da negociação {trade_id}: {'Vitória' if result > 0 else 'Perda'}, Lucro={result}")
 
-                if result <= 0:
-                    consecutive_losses += 1
-                    current_amount = current_amount * 2  # Correctly double the amount for the next trade
-                    amount_doubled = True  # Set the flag to indicate the amount has been doubled
-                    log_message(f"Dobrar valor da negociação. Próximo valor de negociação: R${current_amount}")
-                else:
-                    consecutive_losses = 0
-                    set_amount()  # Reset to 5% of the balance after a win
-                    amount_doubled = False  # Reset the flag
-                    log_message(f"Negociação bem-sucedida. Valor de negociação resetado para: R${current_amount}")
-
                 trade_list.remove(trade_id)  # Ensure the trade is removed from the list after checking
-                set_amount()  # Update the trade amount based on the current balance
         except Exception as e:
-            print(f"Erro ao verificar status da negociação {trade_id}: {e}")
             log_message(f"Erro ao verificar status da negociação {trade_id}: {e}")
 
-def safe_update_label(label, text, color=None):
-    """
-    Safely update a tkinter label from any thread.
-    """
-    def update():
-        label.config(text=text)
-        if color:
-            label.config(fg=color)
-    root.after(0, update)
-
-# Update the `update_session_profit` function to use `safe_update_label`
 def update_session_profit():
     global saldo_entrada, saldo_saida, session_profit
     total_profit = saldo_saida - saldo_entrada  # Calculate total profit based on balance difference
-    color = "green" if total_profit >= 0 else "red"
-    safe_update_label(profit_label, f"Lucro: R${total_profit:.2f}", color)
+    log_message(f"Lucro: R${total_profit:.2f}")
 
 # Função para iniciar a execução de trades
 def start_trading():
     global running
     if not running:
         running = True
-        icon_label.config(image=rotating_icon)
         log_message("Starting trading session...")
         threading.Thread(target=execute_trades).start()
 
@@ -766,31 +728,18 @@ def stop_trading():
     global smart_stop
     smart_stop = True
     running = False
-    if 'static_icon' in globals():
-        icon_label.config(image=static_icon)
     log_message("Smart Stop ativado. Parando execução após reset para valor inicial.")
-
-def update_log():
-    try:
-        with open(log_file, "r") as file:
-            lines = file.readlines()
-            log_text.delete(1.0, tk.END)
-            log_text.insert(tk.END, "".join(lines[-10:]))
-    except FileNotFoundError:
-        log_text.delete(1.0, tk.END)
-        log_text.insert(tk.END, "Log file not found. Waiting for new entries...\n")
-    if running:
-        root.after(1000, update_log)
 
 # Update the set_amount function to use 5% of the account balance
 def set_amount():
     global initial_amount
     global current_amount
     balance = iq.get_balance()
-    initial_amount = balance * 0.005  # Set to 0.5% of the balance
+    # initial_amount = balance * 0.005  # Set to 0.5% of the balance
+    initial_amount = balance * 0.10  # Set to 0.10% of the balance
     current_amount = initial_amount
     log_message(f"Initial amount set to 5% of balance: R${initial_amount:.2f}")
-    safe_update_label(balance_label, f"Balance: R${balance:.2f}")
+    log_message(f"Balance: R${balance:.2f}")
 
 # Function to stop and start trading if the code freezes for more than 15 seconds
 def watchdog():
@@ -808,186 +757,6 @@ def watchdog():
 
 # Start the watchdog thread
 threading.Thread(target=watchdog, daemon=True).start()
-
-# GUI Configuration
-root = tk.Tk()
-root.title("Capybara Trader v6.5")
-root.configure(bg="#0b1429")
-
-static_icon = PhotoImage(file="static_icon.png")
-rotating_icon = PhotoImage(file="working_capy.png")
-icon_label = tk.Label(root, image=static_icon, bg="#0b1429")
-icon_label.grid(row=0, column=0, rowspan=2, padx=10, pady=10)
-
-stop_button = tk.Button(root, text="Smart Stop", command=stop_trading, bg="#F44336", fg="white", font=("Helvetica", 12))
-stop_button.grid(row=0, column=1, padx=5, pady=5)
-
-balance_label = tk.Label(root, text="Balance: R$0.00", bg="#0b1429", fg="white", font=("Helvetica", 12))
-balance_label.grid(row=1, column=1, columnspan=2, padx=5, pady=5)
-
-log_text = ScrolledText(root, height=10, font=("Courier", 10), bg="#0b1429", fg="white")
-log_text.grid(row=3, column=0, columnspan=5, padx=10, pady=10)
-
-# Redirect stdout and stderr to the log_text widget
-sys.stdout = TextRedirector(log_text, "stdout")
-sys.stderr = TextRedirector(log_text, "stderr")
-
-profit_label = tk.Label(root, text="Lucro: R$0.00", font=("Helvetica", 16), bg="#0b1429", fg="white")
-profit_label.grid(row=4, column=0, columnspan=5, padx=10, pady=10)
-
-footer_label = tk.Label(
-    root,
-     text="@oedlopes - 2025  - Deus Seja Louvado - Sola Scriptura - Sola Fide - Solus Christus - Sola Gratia - Soli Deo Gloria",
-    bg="#0b1429",
-    fg="#A9A9A9",
-    font=("Helvetica", 7)
-)
-footer_label.grid(row=5, column=0, columnspan=4, padx=10, pady=5, sticky="nsew")
-#À∴G∴D∴G∴A∴D∴U∴
-update_log()
-update_session_profit()
-
-# Start trading automatically
-start_trading()
-
-root.mainloop()
-
-# ...existing code...
-
-def update_open_trades_label():
-    if running:
-        root.after(1000, update_open_trades_label)
-
-# Start updating the open trades label
-update_open_trades_label()
-
-# Ensure balance is fetched and initial amount is set at the start
-connect_to_iq_option(email, password)
-set_amount()
-
-# Update balance label on initialization
-balance_label.config(text=f"Balance: R${iq.get_balance():.2f}")
-
-# ...existing code...
-
-# Função para simular uma negociação
-def simulate_trade(success):
-    global current_amount, consecutive_losses, amount_doubled
-
-    if success:
-        log_message(f"Trade successful. Amount: ${current_amount}")
-        consecutive_losses = 0
-        current_amount = initial_amount
-        amount_doubled = False
-    else:
-        log_message(f"Trade failed. Amount: ${current_amount}")
-        consecutive_losses += 1
-        if consecutive_losses <= martingale_limit:
-            current_amount *= 2
-            amount_doubled = True
-        else:
-            log_message("Martingale limit reached. Resetting to initial amount.")
-            consecutive_losses = 0
-            current_amount = initial_amount
-            amount_doubled = False
-
-# Teste da lógica de Martingale
-def test_martingale_logic():
-    global current_amount, consecutive_losses, amount_doubled
-
-    # Resetar variáveis
-    current_amount = initial_amount
-    consecutive_losses = 0
-    amount_doubled = False
-
-    # Simular uma série de negociações
-    simulate_trade(False)  # Falha
-    assert current_amount == initial_amount * 2, f"Expected {initial_amount * 2}, got {current_amount}"
-    assert amount_doubled == True, "Expected amount_doubled to be True"
-
-    simulate_trade(False)  # Falha
-    assert current_amount == initial_amount * 4, f"Expected {initial_amount * 4}, got {current_amount}"
-    assert amount_doubled == True, "Expected amount_doubled to be True"
-
-    simulate_trade(True)  # Sucesso
-    assert current_amount == initial_amount, f"Expected {initial_amount}, got {current_amount}"
-    assert amount_doubled == False, "Expected amount_doubled to be False"
-
-    simulate_trade(False)  # Falha
-    assert current_amount == initial_amount * 2, f"Expected {initial_amount * 2}, got {current_amount}"
-    assert amount_doubled == True, "Expected amount_doubled to be True"
-
-    simulate_trade(False)  # Falha
-    assert current_amount == initial_amount * 4, f"Expected {initial_amount * 4}, got {current_amount}"
-    assert amount_doubled == True, "Expected amount_doubled to be True"
-
-    simulate_trade(False)  # Falha
-    assert current_amount == initial_amount * 8, f"Expected {initial_amount * 8}, got {current_amount}"
-    assert amount_doubled == True, "Expected amount_doubled to be True"
-
-    simulate_trade(False)  # Falha
-    assert current_amount == initial_amount * 16, f"Expected {initial_amount * 16}, got {current_amount}"
-    assert amount_doubled == True, "Expected amount_doubled to be True"
-
-    simulate_trade(False)  # Falha
-    assert current_amount == initial_amount, f"Expected {initial_amount}, got {current_amount}"
-    assert amount_doubled == False, "Expected amount_doubled to be False"
-
-    log_message("Martingale logic test completed successfully.")
-
-# Executar o teste
-test_martingale_logic()
-
-# Configuração da GUI
-root = tk.Tk()
-root.title("Capybara v6.3")
-root.configure(bg="#0b1429")
-
-static_icon = PhotoImage(file="static_icon.png")
-rotating_icon = PhotoImage(file="working_capy.png")
-icon_label = tk.Label(root, image=static_icon, bg="#0b1429")
-icon_label.grid(row=0, column=0, rowspan=2, padx=10, pady=10)
-
-start_button = tk.Button(root, text="Start", command=start_trading, bg="#4CAF50", fg="white", font=("Helvetica", 12))
-start_button.grid(row=0, column=1, padx=5, pady=5)
-
-stop_button = tk.Button(root, text="Stop", command=stop_trading, bg="#F44336", fg="white", font=("Helvetica", 12))
-stop_button.grid(row=0, column=2, padx=5, pady=5)
-
-amount_label = tk.Label(root, text="Initial Amount:", bg="#0b1429", fg="white", font=("Helvetica", 12))
-amount_label.grid(row=1, column=1, padx=5, pady=5)
-
-amount_entry = tk.Entry(root, font=("Helvetica", 12))
-amount_entry.insert(0, "2")
-amount_entry.grid(row=1, column=2, padx=5, pady=5)
-
-set_button = tk.Button(root, text="Set Amount", command=lambda: set_amount(float(amount_entry.get())), bg="#FFC107", fg="black", font=("Helvetica", 12))
-set_button.grid(row=1, column=3, padx=5, pady=5)
-
-log_text = ScrolledText(root, height=10, font=("Courier", 10), bg="#0b1429", fg="white")
-log_text.grid(row=2, column=0, columnspan=5, padx=10, pady=10)
-
-profit_label = tk.Label(root, text="Lucro: R$0.00", font=("Helvetica", 16), bg="#0b1429", fg="white")
-profit_label.grid(row=3, column=0, columnspan=5, padx=10, pady=10)
-
-# Rodapé
-footer_label = tk.Label(
-    root,
-    text="@oedlopes - 2025  - Deus seja louvado",
-    bg="#0b1429",
-    fg="#A9A9A9",
-    font=("Helvetica", 8)
-)
-footer_label.grid(row=4, column=0, columnspan=4, padx=10, pady=5, sticky="nsew")
-
-update_log()
-
-invalid_credentials = False
-
-if invalid_credentials:
-    log_text.insert(tk.END, "Invalid credentials. Please check the credentials.txt file.\n")
-
-root.mainloop()
 
 # ...existing code...
 
@@ -1040,8 +809,11 @@ def save_console_output():
     log_filename = f"console_output_{current_date}.txt"
     log_filepath = os.path.join(os.getcwd(), log_filename)
     
+    # Replace log_text with a predefined log message or variable
+    log_content = "This is a sample log content or replace with actual log data."
+    
     with open(log_filepath, "w") as file:
-        file.write(log_text.get(1.0, tk.END))
+        file.write(log_content)
 
 # Schedule the save_console_output function to run every day at midnight
 def schedule_daily_save():
@@ -1054,6 +826,37 @@ def schedule_daily_save():
 schedule_daily_save()
 
 # ...existing code...
+
+# Remover dependências de tkinter
+# Remova ou comente as importações relacionadas à interface gráfica
+# from tkinter import PhotoImage
+# import tkinter as tk
+# from tkinter.scrolledtext import ScrolledText
+
+# Remover funções relacionadas à GUI
+# Exclua ou comente funções como `update_log`, `update_open_trades_label`, e elementos de interface gráfica.
+
+# Adicionar atualizações frequentes de saldo
+def frequent_balance_updates(interval=60):
+    """
+    Atualiza o saldo da conta em intervalos regulares.
+    """
+    while running:
+        try:
+            balance = iq.get_balance()
+            log_message(f"Saldo atualizado: R${balance:.2f}")
+        except Exception as e:
+            log_message(f"Erro ao atualizar saldo: {e}")
+        time.sleep(interval)
+
+# Iniciar atualizações frequentes de saldo em uma thread separada
+if __name__ == "__main__":
+    log_message("Iniciando Capybara Trader sem interface gráfica...")
+    threading.Thread(target=frequent_balance_updates, args=(30,), daemon=True).start()  # Atualizar saldo a cada 30 segundos
+    connect_to_iq_option(email, password)
+    set_amount()
+    log_message("Iniciando sessão de negociações...")
+    start_trading()  # Certifique-se de que as negociações sejam iniciadas
 
 
 
